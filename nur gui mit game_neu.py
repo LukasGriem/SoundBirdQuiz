@@ -239,22 +239,20 @@ def clear_bird_cache(): #heruntergeladene Bilder werden gelöscht. Aktuell nicht
 
 def fetch_bird_image_from_commons(latin_name):
     """
-    Main function to retrieve a Tkinter PhotoImage + license + author for 'latin_name'.
+    Retrieves a Tkinter PhotoImage + license + author for 'latin_name'.
     Loads the metadata.json in bird_cache/<latin_name>, picks one image randomly,
-       loads it from disk, and returns:
-         {
-           "photo": <Tkinter PhotoImage>,
-           "license": <str>,
-           "author": <str>
-         }
+    loads it from disk, and returns:
+        {
+            "photo": <Tkinter PhotoImage>,
+            "license": <str>,
+            "author": <str>
+        }
     or returns None if no cached images exist.
     """
 
     # Read the metadata file
     print("FETCH RUNS")
-    safe_name = latin_name.replace("+", "_")
-    safe_name = safe_name.replace(" ", "_")
-    safe_name = safe_name.lower()
+    safe_name = latin_name.replace("+", "_").replace(" ", "_").lower()
     cache_dir = os.path.join("bird_cache", safe_name)
     print(cache_dir)
     metadata_file = os.path.join(cache_dir, "metadata.json")
@@ -274,9 +272,10 @@ def fetch_bird_image_from_commons(latin_name):
         print(f"Empty metadata for {latin_name}.")
         return None
 
-    # Randomly pick one
+    # Randomly pick one image
     chosen = random.choice(file_metadata)
     local_path = os.path.join(cache_dir, chosen["filename"])
+
     if not os.path.exists(local_path):
         print(f"Local image file missing: {local_path}")
         return None
@@ -284,8 +283,16 @@ def fetch_bird_image_from_commons(latin_name):
     # Load from disk with Pillow
     try:
         img_pil = Image.open(local_path)
-        # Optionally resize to 300x300 or do .thumbnail((300, 300))
-        img_pil = img_pil.resize((300, 300), Resampling.LANCZOS)
+
+        # Berechne die neue Breite basierend auf der fixen Höhe von 300px
+        width, height = img_pil.size
+        new_height = 300
+        new_width = int((new_height / height) * width)  # Verhältnis beibehalten
+
+        # Skaliere das Bild mit .thumbnail(), das das Seitenverhältnis erhält
+        img_pil.thumbnail((new_width, new_height), Image.Resampling.LANCZOS)
+
+        # In Tkinter-kompatibles Format umwandeln
         photo = ImageTk.PhotoImage(img_pil)
 
         return {
@@ -296,7 +303,6 @@ def fetch_bird_image_from_commons(latin_name):
     except Exception as e:
         print(f"Error opening local image {local_path}:", e)
         return None
-
 
 def play_audio(game_window, audio_url):
     """
@@ -464,14 +470,23 @@ def NewSet():
     item_var = tk.StringVar() # Variable für die Menüauswahl
 
     # Funktion zum Setzen der Artenliste basierend auf der Auswahl
-    def set_species_list(*args):
+    def set_species_list():
         selection = item_var.get()  # Aktuelle Auswahl aus dem Menü
-        if selection == "Lebensraum Laubwald":
-            species_list_entry.delete(0, tk.END)  # Vorherige Eingabe löschen
-            species_list_entry.insert(0, "Blaumeise, Rotkehlchen, Zaunkönig, Laubsänger")
-        elif selection == "Lebensraum Nadelwald":
-            species_list_entry.delete(0, tk.END)
-            species_list_entry.insert(0, "Tannenmeise, Haubenmeise, Fichtenkreuzschnabel, Waldbaumläufer")
+
+        # Definiere die Arten für verschiedene Lebensräume
+        habitat_species = {
+            "Lebensraum Laubwald": "Blaumeise, Rotkehlchen, Zaunkönig, Laubsänger",
+            "Lebensraum Nadelwald": "Tannenmeise, Haubenmeise, Fichtenkreuzschnabel, Waldbaumläufer",
+            "Lebensraum Feuchtgebiet": "Eisvogel, Rohrammer, Teichrohrsänger, Zwergtaucher",
+            "Lebensraum Gebirge": "Alpendohle, Steinadler, Mauerläufer, Bergpieper",
+            "Lebensraum Küste": "Austernfischer, Silbermöwe, Sandregenpfeifer, Brandgans",
+            "Verwechselbare Arten": "Singdrossel, Ringdrossel",
+            "Artengruppe Mitteleuropäische Grasmücken": "Mönchsgrasmücke, Gartengrasmücke, Klappergrasmücke, Dorngrasmücke, Sperbergrasmücke"
+        }
+
+        # Falls die Auswahl existiert, ins Entry-Feld eintragen
+        species_list_entry.delete(0, tk.END)
+        species_list_entry.insert(0, habitat_species.get(selection, ""))
 
     # Menubutton für die spezifischen Listen
     specific_list = tb.Menubutton(list_frame, text="Spezifische Artenliste", bootstyle="success-outline")
@@ -480,8 +495,16 @@ def NewSet():
     # Menü mit Radiobuttons erstellen
     inside_specific_menu = tk.Menu(specific_list, tearoff=0)
 
+    # Lebensräume zur Auswahl hinzufügen
+    habitats = [
+        "Lebensraum Laubwald",
+        "Lebensraum Nadelwald",
+        "Lebensraum Feuchtgebiet",
+        "Lebensraum Gebirge",
+        "Lebensraum Küste"]
+
     # Menüeinträge mit Radiobuttons
-    for habitat in ["Lebensraum Laubwald", "Lebensraum Nadelwald"]:
+    for habitat in habitats:
         inside_specific_menu.add_radiobutton(label=habitat, variable=item_var, value=habitat, command=set_species_list)
 
     specific_list["menu"] = inside_specific_menu
@@ -784,6 +807,9 @@ def gamestart(species_list):
             game_window.falsche_antworten += 1
             game_window.species_stats[species]["wrong"] += 1
 
+        #Spektrogram rauslöschen
+        sonogram_label.config(image="")
+
         # Bild anzeigen, falls aktiviert
         if settings.get("image") == 1:
             try:
@@ -1010,6 +1036,9 @@ def gamestart(species_list):
         correct_text = canonical_species[species][display_language]
 
         feedback_label.config(text=f"Übersprungen! Richtig war: {correct_text}")
+
+        # Spektrogram rauslöschen
+        sonogram_label.config(image="")
 
         # Bild anzeigen, falls aktiviert
         if settings.get("image") == 1:
