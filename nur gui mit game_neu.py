@@ -18,6 +18,9 @@ import io
 import pandas as pd  # Zum Einlesen der CSV-Datei
 import asyncio
 import aiohttp
+from PIL.Image import Resampling
+import os
+import shutil
 import time
 
 
@@ -29,11 +32,11 @@ api_cache = {}
 def lookup_species(species_input, species_df):
     """
     Sucht in species_df (CSV mit den Spalten 'Deutsch', 'Wissenschaftlich', 'Englisch')
-    nach einem Eintrag, der dem normalisierten species_input (unabhängig von Groß-/Kleinschreibung
-    und ob '+' als Trenner verwendet wird) entspricht.
+    nach einem Eintrag, der dem normalisierten species_input entspricht.
 
     Gibt ein Dictionary zurück, z.B.:
-    {"Deutsch": "Blaumeise", "Wissenschaftlich": "Cyanistes+caeruleus", "Englisch": "Blue Tit"}
+    {"Deutsch": "Blaumeise", "Wissenschaftlich": "Cyanistes+caeruleus", "Englisch": "Blue Tit",
+     "display_language": "Deutsch"}
     oder None, falls kein Eintrag gefunden wurde.
     """
     species_input_norm = species_input.strip().lower().replace("+", " ")
@@ -44,7 +47,8 @@ def lookup_species(species_input, species_df):
                 return {
                     "Deutsch": row["Deutsch"],
                     "Wissenschaftlich": row["Wissenschaftlich"],
-                    "Englisch": row["Englisch"]
+                    "Englisch": row["Englisch"],
+                    "display_language": col
                 }
     return None
 
@@ -65,7 +69,6 @@ async def async_get_random_recording(species, record_type, sex_type, lifestage_t
         lifestage_type_final = lifestage_type.lower()
         lifestage_query = f'+stage:"{lifestage_type_final}"' if lifestage_type_final else ""
         url = f'https://www.xeno-canto.org/api/2/recordings?query={species}{type_query}{sex_query}{lifestage_query}'
-        print(url)
         async with aiohttp.ClientSession() as session:
             async with session.get(url) as response:
                 data = await response.json()
@@ -98,64 +101,201 @@ def get_random_recording(species, record_type, sex_type, lifestage_type):
         print(f"Error in get_random_recording: {e}")
         return None
 
-
-
-def fetch_wikipedia_bird_image(latin_name, thumb_size=300):
+def cache_bird_images(species_list):
     """
-    Searches English Wikipedia for the given Latin (scientific) bird name,
-    retrieves the main page image, downloads it, and returns a Tkinter-compatible
-    PhotoImage. Returns None if no suitable image is found.
+    Given a list of Latin (scientific) names, attempt to download and locally cache up to 10 images
+    for each bird into 'bird_cache/<latin_name>'.
+
+    - If 'bird_cache/<latin_name>' and 'metadata.json' already exist, skip caching for that species.
+    - Otherwise, query Wikimedia Commons for up to 10 file URLs.
+    - Save each image locally (image_0.jpg, image_1.jpg, ...).
+    - Create a 'metadata.json' with license & author info for each image.
+
+    After this, you can use your fetch_bird_image_from_commons(...) function (or similar)
+    to randomly select and display one of the locally cached images.
     """
-    # 1) Search Wikipedia for the page title
-    endpoint = "https://en.wikipedia.org/w/api.php"
-    search_params = {
-        "action": "query",
-        "list": "search",
-        "srsearch": latin_name,
-        "format": "json",
-        "srnamespace": 0  # Limit to articles (not talk pages, etc.)
+    # Prepare HTTP headers (important to avoid 403 blocks)
+    headers = {
+        "User-Agent": "BirdQuizBot/1.0 (+https://your-website.example)"
     }
-    response = requests.get(endpoint, params=search_params).json()
-    search_results = response.get("query", {}).get("search", [])
-    if not search_results:
+
+    # API endpoint (Wikimedia Commons)
+    endpoint = "https://commons.wikimedia.org/w/api.php"
+
+    for latin_name in species_list:
+        # Create directory name (replace spaces with underscores)
+        safe_name = latin_name.replace("+", "_")
+        safe_name = safe_name.replace(" ", "_")
+        safe_name = safe_name.lower()
+        cache_dir = os.path.join("bird_cache", safe_name)
+        metadata_file = os.path.join(cache_dir, "metadata.json")
+
+        # If the directory + metadata.json exist, assume it's already cached
+        if os.path.exists(cache_dir) and os.path.exists(metadata_file):
+            print(f"Images for '{latin_name}' are already cached. Skipping...")
+            continue
+
+        # Otherwise, create or clean the cache directory
+        if os.path.exists(cache_dir):
+            # If the folder exists but no metadata.json, you may decide to remove
+            # old partial data or just reuse the folder. For safety, let's start fresh.
+            shutil.rmtree(cache_dir)
+        os.makedirs(cache_dir, exist_ok=True)
+
+        # Parameters to get up to 10 files in the File namespace
+        params = {
+            "action": "query",
+            "generator": "search",
+            "gsrsearch": latin_name,
+            "gsrnamespace": 6,  # File namespace
+            "gsrlimit": 10,
+            "prop": "imageinfo",
+            "iiprop": "url|extmetadata",
+            # If you want server-scaled images, uncomment:
+            # "iiurlwidth": 300,
+            # "iiurlheight": 300,
+            "format": "json"
+        }
+
+        print(f"Caching images for '{latin_name}'...")
+        try:
+            resp = requests.get(endpoint, headers=headers, params=params)
+            data = resp.json()
+        except Exception as e:
+            print(f"Error searching for '{latin_name}': {e}")
+            continue
+
+        pages = data.get("query", {}).get("pages", {})
+        if not pages:
+            print(f"No search results for {latin_name}.")
+            continue
+
+        file_metadata = []
+        index = 0
+
+        # Iterate over results, download up to 10 images
+        for page_id, info in pages.items():
+            imageinfo = info.get("imageinfo", [])
+            if not imageinfo:
+                continue
+
+            file_data = imageinfo[0]
+            file_url = file_data.get("url")
+            extmeta = file_data.get("extmetadata", {})
+            license_short = extmeta.get("LicenseShortName", {}).get("value", "")
+            author = extmeta.get("Artist", {}).get("value", "")
+
+            if not file_url:
+                continue
+
+            try:
+                r = requests.get(file_url, headers=headers)
+                if r.status_code != 200:
+                    print(f"Failed to download image from {file_url}")
+                    continue
+
+                local_filename = f"image_{index}.jpg"
+                local_path = os.path.join(cache_dir, local_filename)
+
+                with open(local_path, "wb") as f:
+                    f.write(r.content)
+
+                file_metadata.append({
+                    "filename": local_filename,
+                    "license": license_short,
+                    "author": author
+                })
+
+                index += 1
+                if index >= 5:
+                    break
+            except Exception as e:
+                print(f"Error downloading '{file_url}': {e}")
+
+        # Save metadata if we have any images
+        if file_metadata:
+            with open(metadata_file, "w", encoding="utf-8") as f:
+                json.dump(file_metadata, f, ensure_ascii=False, indent=2)
+            print(f"Cached {len(file_metadata)} images for '{latin_name}'.")
+        else:
+            # If no images, remove the newly created folder
+            if os.path.exists(cache_dir):
+                shutil.rmtree(cache_dir)
+            print(f"No images were cached for '{latin_name}'.")
+
+
+def clear_bird_cache(): #heruntergeladene Bilder werden gelöscht. Aktuell nicht genutzte Funktion
+    """
+    Removes the entire 'bird_cache/' directory (if it exists),
+    deleting all cached images and metadata.
+    """
+    cache_folder = "bird_cache"
+    if os.path.exists(cache_folder):
+        shutil.rmtree(cache_folder)
+        print("Cleared the entire bird_cache folder.")
+    else:
+        print("No 'bird_cache' folder found to clear.")
+
+
+def fetch_bird_image_from_commons(latin_name):
+    """
+    Main function to retrieve a Tkinter PhotoImage + license + author for 'latin_name'.
+    Loads the metadata.json in bird_cache/<latin_name>, picks one image randomly,
+       loads it from disk, and returns:
+         {
+           "photo": <Tkinter PhotoImage>,
+           "license": <str>,
+           "author": <str>
+         }
+    or returns None if no cached images exist.
+    """
+
+    # Read the metadata file
+    print("FETCH RUNS")
+    safe_name = latin_name.replace("+", "_")
+    safe_name = safe_name.replace(" ", "_")
+    safe_name = safe_name.lower()
+    cache_dir = os.path.join("bird_cache", safe_name)
+    print(cache_dir)
+    metadata_file = os.path.join(cache_dir, "metadata.json")
+
+    if not os.path.exists(metadata_file):
+        print(f"No local cache found for {latin_name}.")
         return None
 
-    # Take the first search result's title
-    page_title = search_results[0]["title"]
-
-    # 2) Use 'pageimages' to get the main page image (thumbnail)
-    image_params = {
-        "action": "query",
-        "prop": "pageimages",
-        "titles": page_title,
-        "pithumbsize": thumb_size,  # how large (in px) the thumbnail should be
-        "format": "json"
-    }
-    img_response = requests.get(endpoint, params=image_params).json()
-    pages = img_response.get("query", {}).get("pages", {})
-    if not pages:
+    try:
+        with open(metadata_file, "r", encoding="utf-8") as f:
+            file_metadata = json.load(f)
+    except Exception as e:
+        print(f"Error reading metadata.json for {latin_name}:", e)
         return None
 
-    # Extract the thumbnail URL if present
-    thumbnail_url = None
-    for _, page_data in pages.items():
-        thumb = page_data.get("thumbnail")
-        if thumb and "source" in thumb:
-            thumbnail_url = thumb["source"]
-            break
-
-    if not thumbnail_url:
+    if not file_metadata:
+        print(f"Empty metadata for {latin_name}.")
         return None
 
-    # 3) Download the image and convert to Tkinter-friendly PhotoImage
-    img_data = requests.get(thumbnail_url).content
-    img_pil = Image.open(io.BytesIO(img_data))
-    # Resize (optional, can adjust as needed)
-    img_pil = img_pil.resize((thumb_size, thumb_size))
+    # Randomly pick one
+    chosen = random.choice(file_metadata)
+    local_path = os.path.join(cache_dir, chosen["filename"])
+    if not os.path.exists(local_path):
+        print(f"Local image file missing: {local_path}")
+        return None
 
-    print(img_pil)
-    return ImageTk.PhotoImage(img_pil)
+    # Load from disk with Pillow
+    try:
+        img_pil = Image.open(local_path)
+        # Optionally resize to 300x300 or do .thumbnail((300, 300))
+        img_pil = img_pil.resize((300, 300), Resampling.LANCZOS)
+        photo = ImageTk.PhotoImage(img_pil)
 
+        return {
+            "photo": photo,
+            "license": chosen["license"],
+            "author": chosen["author"]
+        }
+    except Exception as e:
+        print(f"Error opening local image {local_path}:", e)
+        return None
 
 
 def play_audio(game_window, audio_url):
@@ -214,7 +354,6 @@ class AnimatedGIF(tk.Label):
             self.after_cancel(self.after_id)
 
 
-
 # --- GUI und Einstellungen ---
 
 # Hauptfenster
@@ -242,7 +381,8 @@ header_text = "Willkommen zum Vogelquiz!"
 header_label = tb.Label(top_frame, text=header_text, font=("Helvetica", 28), justify="center", bootstyle="default")
 header_label.pack(side="top", anchor="center", pady=(0,0))
 # Subtitle
-my_subtitle = tb.Label(top_frame, text="Teste deine Vogelstimmen-Kenntnisse", font=("Helvetica", 10))
+my_subtitle = tb.Label(top_frame, text="Teste deine Vogelstimmen-Kenntnisse. Du kannst die Arten auf Deutsch, Englisch oder als wissenschaftlichen Name (mit + getrennt) eingeben.",
+                       font=("Helvetica", 10))
 my_subtitle.pack(pady=20)
 #Hintergrundinfo
 my_info = tb.Label(root, text="Audios von xeno-canto.org; Sound-BirdQuiz 2025 © L.Griem & J.Pieper", font=("Helvetica", 8))
@@ -306,30 +446,64 @@ def NewSet():
             inner = tk.Frame(sf)
             inner.pack(fill="both", expand=True)
 
-    #Artenauswahl
     label_species_list = tb.Label(inner, text="Welche Arten möchtest du üben? (Komma getrennt)",
                                   font=("Arial", 12))
     label_species_list.grid(row=0, column=0, columnspan=2, padx=10, pady=10, sticky="nsew")
 
-    species_list_entry = tb.Entry(inner, width=93)
-    species_list_entry.grid(row=1, column=0, columnspan=2, padx=10, pady=10, sticky="nsew")
+    #Artenauswahl
+    # Frame für Auswahleinträge
+    list_frame = tb.Frame(inner)
+    list_frame.grid(row=1, column=0, sticky="ew", padx=10, pady=10)
+    list_frame.grid_columnconfigure(0, weight=1) # Spalte 0 (Entry) soll sich ausdehnen:
+    list_frame.grid_columnconfigure(1, weight=0) # Spalte 1 (Menubutton) bleibt in ihrer natürlichen Größe:
+    #Entry für Arten
+    species_list_entry = tb.Entry(list_frame)
+    species_list_entry.grid(row=0, column=0, padx=(10, 0), pady=10, sticky="ew")
+
+    # Funktion zum automatisches Einfügen der Arten in das Entry-Feld
+    item_var = tk.StringVar() # Variable für die Menüauswahl
+
+    # Funktion zum Setzen der Artenliste basierend auf der Auswahl
+    def set_species_list(*args):
+        selection = item_var.get()  # Aktuelle Auswahl aus dem Menü
+        if selection == "Lebensraum Laubwald":
+            species_list_entry.delete(0, tk.END)  # Vorherige Eingabe löschen
+            species_list_entry.insert(0, "Blaumeise, Rotkehlchen, Zaunkönig, Laubsänger")
+        elif selection == "Lebensraum Nadelwald":
+            species_list_entry.delete(0, tk.END)
+            species_list_entry.insert(0, "Tannenmeise, Haubenmeise, Fichtenkreuzschnabel, Waldbaumläufer")
+
+    # Menubutton für die spezifischen Listen
+    specific_list = tb.Menubutton(list_frame, text="Spezifische Artenliste", bootstyle="success-outline")
+    specific_list.grid(row=0, column=1, padx=(5, 10), pady=10, sticky="w")
+
+    # Menü mit Radiobuttons erstellen
+    inside_specific_menu = tk.Menu(specific_list, tearoff=0)
+
+    # Menüeinträge mit Radiobuttons
+    for habitat in ["Lebensraum Laubwald", "Lebensraum Nadelwald"]:
+        inside_specific_menu.add_radiobutton(label=habitat, variable=item_var, value=habitat, command=set_species_list)
+
+    specific_list["menu"] = inside_specific_menu
+
+
 
     # Checkbox für Spektrogramm
     var_spectro = IntVar()
     spectro_check = tb.Checkbutton(inner, bootstyle="success-round-toggle", text="Spektrogramm anzeigen",
                                    variable=var_spectro, onvalue=1, offvalue=0)
-    spectro_check.grid(row=2, column=0, padx=50, pady=10)
+    spectro_check.grid(row=3, column=0, padx=50, pady=10)
 
     # Checkbox für Bild
     var_image = IntVar()
     image_check = tb.Checkbutton(inner, bootstyle="success-round-toggle", text="Bild anzeigen",
                                  variable=var_image, onvalue=1, offvalue=0)
-    image_check.grid(row=2, column=1, padx=50, pady=10)
+    image_check.grid(row=3, column=1, padx=50, pady=10)
 
     # Radiobuttons für Aufnahmetyp (gemeinsame Variable=record_type)
     # Container-Frame für Radiobuttons und Combobox
     radio_frame = tb.Frame(inner)
-    radio_frame.grid(row=3, column=0, columnspan=3, padx=50, pady=10)
+    radio_frame.grid(row=4, column=0, columnspan=3, padx=50, pady=10)
 
     record_type = StringVar(value="All_type")  # Standard: Alle
 
@@ -363,6 +537,7 @@ def NewSet():
     other_combobox = tb.Combobox(radio_frame, bootstyle="success", textvariable=custom_record_type)
     other_combobox["values"] = ["Drumming", "Alarm call", "Begging call", "Female song", "Flight call", "Imitation", "Subsong"]
     other_combobox.set("Bitte auswählen")
+    other_combobox['state'] = 'readonly'
     other_combobox.pack_forget()
 
     # Callback, der die Combobox ein- oder ausblendet, je nachdem, ob "Other" gewählt ist.
@@ -384,12 +559,14 @@ def NewSet():
     sex_type = StringVar(value="")
     sex = ["All Gender", "Male", "Female"]
     selected_sex = tb.Combobox(inner, bootstyle="success", values=sex, textvariable=sex_type)
+    selected_sex['state'] = 'readonly'
     selected_sex.set("All Gender")
     selected_sex.grid(row=5, column=0, padx=10, pady=20)
 
     lifestage_type = StringVar(value="")
     lifestage = ["All Stages", "Adult", "Juvenile", "Nestling"]
     selected_lifestage = tb.Combobox(inner, bootstyle="success", value=lifestage, textvariable=lifestage_type)
+    selected_lifestage['state'] = 'readonly'
     selected_lifestage.set("All Stages")
     selected_lifestage.grid(row=5, column=1, padx=10, pady=20)
 
@@ -447,7 +624,6 @@ def gamestart(species_list):
     # Die vom Nutzer eingegebene Liste (Komma-getrennt) – Elemente können in Deutsch, Wissenschaftlich oder Englisch sein
     Artenliste_input = [art.strip() for art in species_list.split(",") if art.strip()]
 
-
     # Lade die CSV mit den Artennamen (Spalten: Deutsch, Wissenschaftlich, Englisch)
     try:
         species_df = pd.read_csv("Europ_Species_3.csv")
@@ -457,21 +633,19 @@ def gamestart(species_list):
 
     # Baue eine kanonische Artenliste (als englische Version) und eine Mapping-Datenstruktur:
     # canonical_species: key = englischer Name (in Lowercase), value = Dictionary mit allen Varianten
-    # species_options: Liste der kanonischen (englischen) Namen
+    # species_options: Liste der kanonischen (wissenschaftlichen) Namen
     canonical_species = {}
     species_options = []
     for art in Artenliste_input:
         mapping = lookup_species(art, species_df)
         if mapping:
-            eng = mapping["Englisch"].strip()
+            # Schlüssel kann z. B. der englische Name in Kleinbuchstaben sein:
+            eng = mapping["Wissenschaftlich"].strip()
             eng_lower = eng.lower()
             canonical_species[eng_lower] = mapping
             species_options.append(eng_lower)
         else:
             print(f"Art '{art}' nicht in der CSV gefunden.")
-    if not species_options:
-        print("Keine gültigen Arten gefunden. Spiel kann nicht gestartet werden.")
-        return
 
     # Lade gespeicherte Einstellungen (z.B. Spektrogramm, Aufnahmetyp)
     try:
@@ -570,17 +744,80 @@ def gamestart(species_list):
     feedback_label = tb.Label(game_window, text="", font=("Helvetica", 14))
     feedback_label.pack(pady=20)
 
-    # Erstelle für jede Art einen Button – als Anzeige nutzen wir den deutschen Namen
+    def select_species(selected_key):
+        # Stoppe laufende Audio und Progressbar:
+        if current_round.get("audio_player"):
+            current_round["audio_player"].stop()
+        audio_progress.stop()
+
+        #Deaktiviere die Antwortbuttons
+        for btn in species_buttons:
+            btn.config(state=DISABLED)
+
+        # Aktiviere den NEXT Button
+        next_button.config(state="normal")
+
+        species = current_round["species"]
+        if species not in game_window.species_stats:
+            game_window.species_stats[species] = {"correct": 0, "wrong": 0}
+
+        # Ersetze + durch Leerzeichen
+
+        # Ermittle, in welcher Sprache die korrekte Art angezeigt werden soll.
+        # Das wurde in lookup_species unter "display_language" gespeichert.
+        display_language = canonical_species[species].get("display_language", "Deutsch")
+
+        # Hole den angezeigten Text für die korrekte Art und für die ausgewählte Art
+        correct_text = canonical_species[species][display_language]
+        selected_text = canonical_species[selected_key][display_language]
+        print("Ausgewählte Art:", selected_text)
+
+        # Vergleiche diese Texte case-insensitiv
+        if selected_text.strip().lower() == correct_text.strip().lower():
+            feedback_label.config(text="Richtig!")
+            game_window.korrekte_antworten += 1
+            game_window.species_stats[species]["correct"] += 1
+        else:
+            # Hier kannst du z.B. immer noch den deutschen Namen anzeigen,
+            # oder du verwendest den korrekten Text in der gewählten Sprache:
+            feedback_label.config(text=f"Falsch! Richtig war: {correct_text}")
+            game_window.falsche_antworten += 1
+            game_window.species_stats[species]["wrong"] += 1
+
+        # Bild anzeigen, falls aktiviert
+        if settings.get("image") == 1:
+            try:
+                latin_name = canonical_species[species]["Wissenschaftlich"]
+                image_data = fetch_bird_image_from_commons(latin_name)
+                photo = image_data["photo"]
+                photo_license = image_data["license"]
+                photo_author = image_data["author"]
+                if photo:
+                    game_window.image_label.config(image=photo)
+                    game_window.image_label.image = photo  # keep a reference
+                else:
+                    print(f"No Wikimedia image found for '{latin_name}'.")
+            except Exception as e:
+                print(f"Error fetching Wikimedia image for {species}: {e}")
+
+
+
+    # Erstelle für jede Art einen Button – als Anzeige nutzen wir sie Sprache des Species_list
     species_buttons = []
     row = 0
     col = 0
     for eng in species_options:
-        display_name = canonical_species[eng]["Deutsch"]
-        btn = tb.Button(art_frame, text=display_name, bootstyle="success-outline-toolbutton",
-                        command=lambda eng=eng: select_species(eng))
+        # Ermittle, in welcher Sprache der eingegebene Name gefunden wurde (falls vorhanden)
+        display_language = canonical_species[eng].get("display_language", "Deutsch")
+        display_name = canonical_species[eng][display_language]
+        btn = tb.Button(
+            art_frame,
+            text=display_name,
+            bootstyle="success-outline-toolbutton",
+            command=lambda current=eng: select_species(current)
+        )
         btn.grid(row=row, column=col, padx=10, pady=20)
         species_buttons.append(btn)
-
         col += 1
         if col == 6:
             col = 0
@@ -663,6 +900,11 @@ def gamestart(species_list):
                 settings.get("lifestage_type", "")
             )
 
+            #Hier werden die Bilder geladen und lokal gespeichert
+            print(settings.get("image"))
+            if settings.get("image") == 1:
+                cache_bird_images(species_options)
+
             def update_ui(recording):
                 # Falls der Lade-Container noch existiert, entferne ihn vollständig
                 if hasattr(game_window, "loading_frame"):
@@ -696,6 +938,7 @@ def gamestart(species_list):
 
     # --- Angepasste next_round() ---
     def next_round():
+
         # Entferne das bisher angezeigte Vogelbild, falls vorhanden:
         game_window.image_label.config(image='')
         game_window.image_label.image = None
@@ -751,83 +994,43 @@ def gamestart(species_list):
             # Fallback: Falls keine vorgeladene Runde vorliegt, lade synchron
             start_round()
 
-
-    def select_species(selected_eng):
-        # Stoppe ggf. laufende Audio
-        if current_round["audio_player"]:
-            current_round["audio_player"].stop()
-
-        #Audio_progress stoppen
-        audio_progress.stop()
-
         species = current_round["species"]
-        # Initialisiere Statistik, falls noch nicht vorhanden:
-        if species not in game_window.species_stats:
-            game_window.species_stats[species] = {"correct": 0, "wrong": 0}
 
-        if selected_eng == species:
-            feedback_label.config(text="Richtig!")
-            game_window.korrekte_antworten += 1
-            game_window.species_stats[species]["correct"] += 1
-        else:
-            richtig_deu = canonical_species[species]["Deutsch"]
-            feedback_label.config(text=f"Falsch! Richtig war: {richtig_deu}")
-            game_window.falsche_antworten += 1
-            game_window.species_stats[species]["wrong"] += 1
-
-        # Falls die Bildoption aktiviert ist, lade und zeige das Vogelbild:
-        if settings.get("image") == 'Ja':
-            try:
-                latin_name_raw = canonical_species[species]["Wissenschaftlich"]
-                # Replace the + sign with a space
-                latin_name = latin_name_raw.replace("+", " ")
-                print(latin_name)
-                photo = fetch_wikipedia_bird_image(latin_name, thumb_size=300)
-                if photo:
-                    game_window.image_label.config(image=photo)
-                    game_window.image_label.image = photo  # keep a reference
-                else:
-                    print(f"No Wikipedia image found for '{latin_name}'.")
-            except Exception as e:
-                print(f"Error fetching Wikipedia image for {species}: {e}")
-
-        # Deaktiviere alle Antwort-Buttons
-        for btn in species_buttons:
-            btn.config(state=DISABLED)
-
-        # Aktiviere den NEXT Button
-        next_button.config(state="normal")
 
     def skip_round():
         if current_round["audio_player"]:
             current_round["audio_player"].stop()
 
-
         species = current_round["species"]
         if species not in game_window.species_stats:
             game_window.species_stats[species] = {"correct": 0, "wrong": 0}
 
-        richtig_deu = canonical_species[species]["Deutsch"]
-        feedback_label.config(text=f"Übersprungen! Richtig war: {richtig_deu}")
+        # Ermittle, in welcher Sprache der eingegebene Name gefunden wurde
+        display_language = canonical_species[species].get("display_language", "Deutsch")
+        correct_text = canonical_species[species][display_language]
+
+        feedback_label.config(text=f"Übersprungen! Richtig war: {correct_text}")
 
         # Bild anzeigen, falls aktiviert
-        if settings.get("image") == 'Ja':
+        if settings.get("image") == 1:
             try:
-                latin_name_raw = canonical_species[species]["Wissenschaftlich"]
-                # Replace the + sign with a space
-                latin_name = latin_name_raw.replace("+", " ")
-                print(latin_name)
-                photo = fetch_wikipedia_bird_image(latin_name, thumb_size=300)
+                latin_name = canonical_species[species]["Wissenschaftlich"]
+                image_data = fetch_bird_image_from_commons(latin_name)
+                photo = image_data["photo"]
+                photo_license = image_data["license"]
+                photo_author = image_data["author"]
                 if photo:
                     game_window.image_label.config(image=photo)
                     game_window.image_label.image = photo  # keep a reference
                 else:
-                    print(f"No Wikipedia image found for '{latin_name}'.")
+                    print(f"No Wikimedia image found for '{latin_name}'.")
             except Exception as e:
-                print(f"Error fetching Wikipedia image for {species}: {e}")
+                print(f"Error fetching Wikimedia image for {species}: {e}")
 
         for btn in species_buttons:
             btn.config(state=DISABLED)
+
+        audio_progress.stop()
 
         next_button.config(state="normal")
 
