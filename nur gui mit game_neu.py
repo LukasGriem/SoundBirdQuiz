@@ -22,6 +22,9 @@ from PIL.Image import Resampling
 import os
 import shutil
 import time
+import numpy as np
+import seaborn as sns
+import matplotlib.pyplot as plt
 
 
 # Globaler Cache für API-Antworten
@@ -169,7 +172,7 @@ def cache_bird_images(species_list):
             "prop": "pageimages",
             "titles": page_title,
             "piprop": "thumbnail|name",
-            "pithumbsize": 500,  # ~300 px wide
+            "pithumbsize": 800,  # ~300 px wide
             "format": "json"
         }
         try:
@@ -389,6 +392,66 @@ class AnimatedGIF(tk.Label):
         if hasattr(self, 'after_id'):
             self.after_cancel(self.after_id)
 
+def plot_final_stats_matrix(matrix, save_path=None):
+    """
+    Plots the final_stats_matrix as a heatmap with:
+    - Diagonal values colored from white to green (higher values = darker green)
+    - Off-diagonal values colored from white to red (higher values = darker red)
+    - Dark theme: black background, white text
+    - No title (as requested)
+    - X-axis stays on top
+    - Option to save as PNG for GUI integration
+    """
+    # Create masks for diagonal and off-diagonal elements
+    diag_mask = np.eye(len(matrix), dtype=bool)
+    off_diag_mask = ~diag_mask
+
+    # Define colormaps
+    cmap_diag = sns.light_palette("#5cb85c", as_cmap=True)
+    cmap_off_diag = sns.light_palette("#f0ad4e", as_cmap=True)
+
+    # Normalize values (0 = white)
+    max_value = matrix.values.max()
+    norm = plt.Normalize(vmin=0, vmax=max_value)
+
+    # Create figure and axis with dark background
+    fig, ax = plt.subplots(figsize=(10, 8))
+    fig.patch.set_facecolor('black')  # Set figure background to black
+    ax.set_facecolor('black')  # Set axis background to black
+
+    # X-axis stays on top
+    ax.xaxis.tick_top()
+    ax.xaxis.set_label_position("top")
+
+    # Plot off-diagonal values first (no grid lines)
+    sns.heatmap(matrix, mask=~off_diag_mask, cmap=cmap_off_diag, annot=True,
+                cbar=False, linewidths=0, ax=ax, norm=norm, square=True)
+
+    # Overlay the diagonal values (no grid lines)
+    sns.heatmap(matrix, mask=~diag_mask, cmap=cmap_diag, annot=True,
+                cbar=False, linewidths=0, ax=ax, norm=norm, square=True)
+
+    # Set axis labels in white
+    ax.set_xlabel("Your Prediction", fontsize=18, labelpad=10, color='white')
+    ax.set_ylabel("Correct Species", fontsize=18, labelpad=10, color='white')
+
+    # Set tick labels in white
+    ax.tick_params(colors='white')
+    plt.xticks(rotation=45,ha='left', fontsize=8, color='white')
+    plt.yticks(rotation=0, fontsize=8, color='white')
+
+    # Ensure equal aspect ratio for quadratic cells
+    ax.set_aspect('equal')
+    plt.subplots_adjust(left=0.2, right=0.9, top=0.85, bottom=0.15) #Adjust margins
+    plt.tight_layout(pad=2) #Tight layout but with padding
+
+
+    # Save PNG with transparent background (for GUI integration)
+    save_path = "bird_cache/fig1.png"
+    if save_path:
+        plt.savefig(save_path, transparent=True, dpi=300)
+
+
 
 # --- GUI und Einstellungen ---
 
@@ -468,19 +531,8 @@ def NewSet():
     outer_frame.pack(fill=BOTH, expand=YES, padx=10, pady=10)
     sf = ScrolledFrame(outer_frame, height=300, width=1000)
     sf.pack(fill=BOTH, expand=YES, padx=10, pady=10)
-
-    # Verwende sf.innerframe als Container
-    try:
-        inner = sf.interior
-    except AttributeError:
-        # Falls es keine "interior" gibt, schau, ob Kinder vorhanden sind
-        children = sf.winfo_children()
-        if children:
-            inner = children[0]
-        else:
-            # Falls überhaupt keine Kinder existieren, kannst du manuell einen Frame hinzufügen:
-            inner = tk.Frame(sf)
-            inner.pack(fill="both", expand=True)
+    inner = tk.Frame(sf)
+    inner.pack(fill="both", expand=True)
 
    
 
@@ -492,7 +544,7 @@ def NewSet():
 
     #Entry für Arten
     species_list_entry = tb.Entry(inner)
-    species_list_entry.grid(row=1, column=0, padx=(10, 0), pady=10, sticky="ew")
+    species_list_entry.grid(row=1, column=0, columnspan=3, padx=10, pady=10, sticky="ew")
 
 
     # Funktion zum automatisches Einfügen der Arten in das Entry-Feld
@@ -504,14 +556,14 @@ def NewSet():
 
         # Definiere die Arten für verschiedene Lebensräume
         habitat_species = {
-            "Lebensraum Laubwald": "Blaumeise, Rotkehlchen, Singdrossel, Zaunkönig, Waldlaubsänger, Trauerschnäpper, Kohlmeise, Buntspecht, Gimpel, Zilpzalp, Mönchsgrasmücke, Kleiber",
-            "Lebensraum Nadelwald": "Tannenmeise, Haubenmeise, Erlenzeisig, Fichtenkreuzschnabel, Waldbaumläufer, Wintergoldhähnchen",
-            "Lebensraum Offenland/Agrarlandschaft": "Feldlerche, Rebhuhn, Neuntöter, Schwarzkehlchen, Dorngrasmücke, Grauammer, Goldammer, Feldsperling, Mäusebussard",
-            "Lebensraum Siedlung": "Haussperling, Hausrotschwanz, Blaumeise, Bachstelze, Kohlmeise, Amsel, Feldsperling, Grünfink, Star, Buchfink, Elster",
-            "Lebensraum Auenwald": "Pirol, Nachtigall, Kleinspecht, Mittelspecht, Trauerschnäpper, Kohlmeise, Blaumeise, Kleiber, Schwarzspecht, Buchfink",
-            "Lebensraum Feuchtgebiet Binnenland": "Bartmeise, Sumpfrohrsänger, Schilfrohrsänger, Eisvogel, Rohrammer, Teichrohrsänger, Zwergtaucher, Waldwasserläufer, Kiebitz",
-            "Lebensraum Alpine Zone": "Alpendohle, Mauerläufer, Bergpieper, Birkenzeisig, Hausrotschwanz, Alpenbraunelle",
-            "Lebensraum Küste (typische Arten)": "Austernfischer, Silbermöwe, Sandregenpfeifer, Brandgans, Lachmöwe, Alpenstrandläufer, Rotschenkel, Eiderente"
+            "Laubwald": "Blaumeise, Rotkehlchen, Singdrossel, Zaunkönig, Waldlaubsänger, Trauerschnäpper, Kohlmeise, Buntspecht, Gimpel, Zilpzalp, Mönchsgrasmücke, Kleiber",
+            "Nadelwald": "Tannenmeise, Haubenmeise, Erlenzeisig, Fichtenkreuzschnabel, Waldbaumläufer, Wintergoldhähnchen",
+            "Offenland/Agrarlandschaft": "Feldlerche, Rebhuhn, Neuntöter, Schwarzkehlchen, Dorngrasmücke, Grauammer, Goldammer, Feldsperling, Mäusebussard",
+            "Siedlung": "Haussperling, Hausrotschwanz, Blaumeise, Bachstelze, Kohlmeise, Amsel, Feldsperling, Grünfink, Star, Buchfink, Elster",
+            "Auenwald": "Pirol, Nachtigall, Kleinspecht, Mittelspecht, Trauerschnäpper, Kohlmeise, Blaumeise, Kleiber, Schwarzspecht, Buchfink",
+            "Feuchtgebiet Binnenland": "Bartmeise, Sumpfrohrsänger, Schilfrohrsänger, Eisvogel, Rohrammer, Teichrohrsänger, Zwergtaucher, Waldwasserläufer, Kiebitz",
+            "Alpine Zone": "Alpendohle, Mauerläufer, Bergpieper, Birkenzeisig, Hausrotschwanz, Alpenbraunelle",
+            "Küste (typische Arten)": "Austernfischer, Silbermöwe, Sandregenpfeifer, Brandgans, Lachmöwe, Alpenstrandläufer, Rotschenkel, Eiderente"
         }
 
         # Falls die Auswahl existiert, ins Entry-Feld eintragen
@@ -527,14 +579,14 @@ def NewSet():
 
     # Lebensräume zur Auswahl hinzufügen
     habitats = [
-        "Lebensraum Laubwald",
-            "Lebensraum Nadelwald",
-            "Lebensraum Offenland/Agrarlandschaft",
-            "Lebensraum Siedlung",
-            "Lebensraum Auenwald",
-            "Lebensraum Feuchtgebiet Binnenland",
-            "Lebensraum Alpine Zone",
-            "Lebensraum Küste (typische Arten)",
+        "Alpine Zone",
+        "Auenwald",
+        "Feuchtgebiet Binnenland",
+        "Küste (typische Arten)",
+        "Laubwald",
+        "Nadelwald",
+        "Offenland/Agrarlandschaft",
+        "Siedlung",
             ]
 
     # Menüeinträge mit Radiobuttons
@@ -548,23 +600,23 @@ def NewSet():
     def set_species_list_group():
         selection = item_var.get()  # Aktuelle Auswahl aus dem Menü
 
-        # Definiere die Arten für verschiedene Lebensräume
+        # Definiere die Artengruppen
         group_species = {
-            "Artengruppe Watvögel": "Rotschenkel, Grünschenkel, Flussuferläufer, Waldwasserläufer, Bruchwasserläufer, Dunkler Wasserläufer, Alpenstrandläufer, Sandregenpfeifer",
-            "Artengruppe Drosseln": "Singdrossel, Ringdrossel, Amsel, Misteldrossel",
-            "Artengruppe mitteleuropäische Grasmücken": "Mönchsgrasmücke, Gartengrasmücke, Klappergrasmücke, Dorngrasmücke, Sperbergrasmücke",
-            "Artengruppe Meisen": "Blaumeise, Kohlmeise, Sumpfmeise, Weidenmeise, Tannenmeise, Schwanzmeise, Haubenmeise",
-            "Artengruppe Spechte": "Buntspecht, Kleinspecht, Schwarzspecht, Weißrückenspecht, Dreizehenspecht, Grünspecht, Grauspecht, Mittelspecht",
-            "Artengruppe Möwen": "Silbermöwe, Lachmöwe, Heringsmöwe, Mantelmöwe, Sturmmöwe",
-            "Artengruppe Eulen": "Waldkauz, Waldohreule, Uhu, Sperlingskauz, Raufußkauz, Schleiereule",
-            "Artengruppe Rohrsänger": "Teichrohrsänger, Sumpfrohrsänger, Drosselrohrsänger, Schilfrohrsänger",
-            "Artengruppe Greifvögel": "Sperber, Turmfalke, Mäusebussard, Habicht, Rotmilan, Rohrweihe",
-            "Artengruppe Enten": "Stockente, Krickente, Knäkente, Reiherente, Schnatterente, Löffelente, Pfeifente, Tafelente, Schellente",
-            "Artengruppe Laubsänger": "Zilpzalp, Fitis, Waldlaubsänger, Berglaubsänger",
-            "Artengruppe Schnäpper": "Trauerschnäpper, Grauschnäpper, Halsbandschnäpper, Zwergschnäpper",
-            "Artengruppe Ammern": "Goldammer, Grauammer, Zippammer, Zaunammer",
-            "Artengruppe Singvogelzug": "Buchfink, Bergfink, Heckenbraunelle, Singdrossel, Rotdrossel, Feldlerche, Wacholderdrossel, Heidelerche, Haubenlerche, Baumpieper, Wiesenpieper, Erlenzeisig",
-            "Artengruppe Pieper": "Baumpieper, Wiesenpieper, Bergpieper, Rotkehlpieper, Brachpieper, Waldpieper"
+            "Watvögel": "Rotschenkel, Grünschenkel, Flussuferläufer, Waldwasserläufer, Bruchwasserläufer, Dunkler Wasserläufer, Alpenstrandläufer, Sandregenpfeifer",
+            "Drosseln": "Singdrossel, Ringdrossel, Amsel, Misteldrossel",
+            "Mitteleuropäische Grasmücken": "Mönchsgrasmücke, Gartengrasmücke, Klappergrasmücke, Dorngrasmücke, Sperbergrasmücke",
+            "Meisen": "Blaumeise, Kohlmeise, Sumpfmeise, Weidenmeise, Tannenmeise, Schwanzmeise, Haubenmeise",
+            "Spechte": "Buntspecht, Kleinspecht, Schwarzspecht, Weißrückenspecht, Dreizehenspecht, Grünspecht, Grauspecht, Mittelspecht",
+            "Möwen": "Silbermöwe, Lachmöwe, Heringsmöwe, Mantelmöwe, Sturmmöwe",
+            "Eulen": "Waldkauz, Waldohreule, Uhu, Sperlingskauz, Raufußkauz, Schleiereule",
+            "Rohrsänger": "Teichrohrsänger, Sumpfrohrsänger, Drosselrohrsänger, Schilfrohrsänger",
+            "Greifvögel": "Sperber, Turmfalke, Mäusebussard, Habicht, Rotmilan, Rohrweihe",
+            "Enten": "Stockente, Krickente, Knäkente, Reiherente, Schnatterente, Löffelente, Pfeifente, Tafelente, Schellente",
+            "Laubsänger": "Zilpzalp, Fitis, Waldlaubsänger, Berglaubsänger",
+            "Schnäpper": "Trauerschnäpper, Grauschnäpper, Halsbandschnäpper, Zwergschnäpper",
+            "Ammern": "Goldammer, Grauammer, Zippammer, Zaunammer",
+            "Singvogelzug": "Buchfink, Bergfink, Heckenbraunelle, Singdrossel, Rotdrossel, Feldlerche, Wacholderdrossel, Heidelerche, Haubenlerche, Baumpieper, Wiesenpieper, Erlenzeisig",
+            "Pieper": "Baumpieper, Wiesenpieper, Bergpieper, Rotkehlpieper, Brachpieper, Waldpieper"
         }
 
         # Falls die Auswahl existiert, ins Entry-Feld eintragen
@@ -578,23 +630,24 @@ def NewSet():
     # Menü mit Radiobuttons erstellen
     inside_specific_group_menu = tk.Menu(specific_group_list, tearoff=0)
 
-    # Lebensräume zur Auswahl hinzufügen
+    # Artengruppen zur Auswahl hinzufügen
     groups = [
-            "Artengruppe Watvögel",
-            "Artengruppe Drosseln",
-            "Artengruppe mitteleuropäische Grasmücken",
-            "Artengruppe Meisen",
-            "Artengruppe Spechte",
-            "Artengruppe Möwen",
-            "Artengruppe Eulen",
-            "Artengruppe Rohrsänger",
-            "Artengruppe Greifvögel",
-            "Artengruppe Enten",
-            "Artengruppe Laubsänger",
-            "Artengruppe Schnäpper",
-            "Artengruppe Ammern",
-            "Artengruppe Singvogelzug",
-            "Artengruppe Pieper"]
+        "Ammern",
+        "Drosseln",
+        "Enten",
+        "Eulen",
+        "Greifvögel",
+        "Laubsänger",
+        "Meisen",
+        "Mitteleuropäische Grasmücken",
+        "Möwen"
+        "Pieper",
+        "Rohrsänger",
+        "Schnäpper",
+        "Singvogelzug",
+        "Spechte",
+        "Watvögel"
+        ]
 
     # Menüeinträge mit Radiobuttons
     for group in groups:
@@ -602,7 +655,74 @@ def NewSet():
 
     specific_group_list["menu"] = inside_specific_group_menu
 
+    # Funktion zum Setzen der Artenliste basierend auf der Auswahl
+    def set_species_list_similar():
+        selection = item_var.get()  # Aktuelle Auswahl aus dem Menü
 
+        # Definiere die Arten für verschiedene Paare
+        similar_species = {
+            "Eisvogel-Heckenbraunelle (Call)": "Eisvogel, Heckenbraunelle",
+            "Zippammer-Zaunammer (Call)": "Zippammer, Zaunammer",
+            "Blaumerle-Steinrötel (Song)": "Blaumerle, Steinrötel",
+            "Bergfink-Buchfink (Other: Flightcall)": "Bergfink, Buchfink",
+            "Amsel-Misteldrossel (Song)": "Amsel, Misteldrossel",
+            "Fitis-Gartenrotschwanz (Ruf)": "Fitis, Gartenrotschwanz"
+        }
+
+        # Zuordnung des passenden Radiobutton-Wertes
+        record_type_mapping = {
+            "Eisvogel-Heckenbraunelle (Call)": "Call",
+            "Zippammer-Zaunammer (Call)": "Call",
+            "Blaumerle-Steinrötel (Song)": "Song",
+            "Bergfink-Buchfink (Other: Flightcall)": "Other",
+            "Amsel-Misteldrossel (Song)": "Song",
+            "Fitis-Gartenrotschwanz (Ruf)": "Call"
+        }
+
+        # Mapping für die Combobox-Werte, falls "Other" gewählt wird
+        combobox_mapping = {
+            "Bergfink-Buchfink (Other: Flightcall)": "Flight call"
+        }
+
+        ### **1. Setze zuerst das Entry-Feld**
+        species_list_entry.delete(0, tk.END)
+        if selection in similar_species:
+            species_list_entry.insert(0, similar_species[selection])
+
+        ### **2. Setze den passenden Radiobutton**
+        if selection in record_type_mapping:
+            record_type.set(record_type_mapping[selection])
+
+        ### **3. Falls "Other" gewählt wurde, überprüfe die Combobox**
+        if selection in combobox_mapping:
+            custom_record_type.set(combobox_mapping[selection])  # Setze Combobox-Wert
+            other_combobox.pack(side=LEFT, padx=10)  # Zeige die Combobox an
+        else:
+            custom_record_type.set("Bitte auswählen")  # Standardwert setzen
+            other_combobox.pack_forget()  # Combobox verstecken
+
+    # Menubutton für die spezifischen Listen
+    similar_list = tb.Menubutton(inner, text="Verwechselbare Arten", bootstyle="success-outline")
+    similar_list.grid(row=2, column=2, padx=(5, 10), pady=10, sticky="w")
+
+    # Menü mit Radiobuttons erstellen
+    inside_similar_list_menu = tk.Menu(similar_list, tearoff=0)
+
+    # Paare zur Auswahl hinzufügen
+    similars = [
+        "Amsel-Misteldrossel (Song)",
+        "Blaumerle-Steinrötel (Song)",
+        "Bergfink-Buchfink (Other: Flightcall)",
+        "Eisvogel-Heckenbraunelle (Call)",
+        "Fitis-Gartenrotschwanz (Ruf)",
+        "Zippammer-Zaunammer (Call)"
+    ]
+
+    # Menüeinträge mit Radiobuttons
+    for similar in similars:
+        inside_similar_list_menu.add_radiobutton(label=similar, variable=item_var, value=similar, command=set_species_list_similar)
+
+    similar_list["menu"] = inside_similar_list_menu
 
     # Checkbox für Spektrogramm
     var_spectro = IntVar()
@@ -651,7 +771,7 @@ def NewSet():
     # Combobox – zunächst ausgeblendet
     custom_record_type = StringVar(value="")  # Diese Variable speichert den benutzerdefinierten Wert
     other_combobox = tb.Combobox(radio_frame, bootstyle="success", textvariable=custom_record_type)
-    other_combobox["values"] = ["Drumming", "Alarm call", "Begging call", "Female song", "Flight call", "Imitation", "Subsong"]
+    other_combobox["values"] = ["Alarm call", "Begging call", "Drumming", "Female song", "Flight call", "Imitation", "Subsong"]
     other_combobox.set("Bitte auswählen")
     other_combobox['state'] = 'readonly'
     other_combobox.pack_forget()
@@ -689,8 +809,9 @@ def NewSet():
     def save_and_start():
         # Falls "Other" gewählt ist, überschreibe record_type mit dem aktuellen Wert der Combobox
         if record_type.get() == "Other":
-            # Hier rufen wir den aktuell in der Combobox eingegebenen Text ab:
-            new_value = other_combobox.get()
+            new_value = other_combobox.get() # Hier rufen wir den aktuell in der Combobox eingegebenen Text ab
+            if new_value == "Bitte auswählen":  # Falls der Wert "Bitte auswählen" ist, ersetze ihn mit einem leeren String
+                new_value = ""
             record_type.set(new_value)
             print("record_type überschrieben mit:", new_value)
         if record_type.get() == "All_type":
@@ -813,7 +934,6 @@ def gamestart(species_list):
         audio_progress.start(15)
 
 
-
     info_audio_button = tb.Label(audio_frame, text="Audio läuft", bootstyle="secondary")
     info_audio_button.grid(row=0, column=1, padx=10)
 
@@ -886,7 +1006,13 @@ def gamestart(species_list):
         # Hole den angezeigten Text für die korrekte Art und für die ausgewählte Art
         correct_text = canonical_species[species][display_language]
         selected_text = canonical_species[selected_key][display_language]
-        print("Ausgewählte Art:", selected_text)
+
+        # fülle finale Matrix mit werten je nach Auswahl
+        print("Korrekt ist:", correct_text)
+        print("Ausgewählt wurde:", selected_text)
+        global final_stats_matrix  # Ensure we refer to the global variable
+        final_stats_matrix.loc[correct_text, selected_text] += 1
+        print(final_stats_matrix)
 
         # Vergleiche diese Texte case-insensitiv
         if selected_text.strip().lower() == correct_text.strip().lower():
@@ -925,10 +1051,15 @@ def gamestart(species_list):
     species_buttons = []
     row = 0
     col = 0
+
+    display_names = []  # Collect display names
     for eng in species_options:
-        # Ermittle, in welcher Sprache der eingegebene Name gefunden wurde (falls vorhanden)
+        # Determine the display language for the species name
         display_language = canonical_species[eng].get("display_language", "Deutsch")
         display_name = canonical_species[eng][display_language]
+        display_names.append(display_name)
+
+        # Debug output
         btn = tb.Button(
             art_frame,
             text=display_name,
@@ -937,10 +1068,20 @@ def gamestart(species_list):
         )
         btn.grid(row=row, column=col, padx=10, pady=20)
         species_buttons.append(btn)
+
         col += 1
         if col == 6:
             col = 0
             row += 1
+
+    # Create and store the matrix globally as a Pandas DataFrame with labeled rows and columns
+    global final_stats_matrix  # Ensure we refer to the global variable
+    final_stats_matrix = pd.DataFrame(
+        np.zeros((len(display_names), len(display_names))),
+        index=display_names,
+        columns=display_names
+    )
+
 
     # Variable, in der wir Daten der aktuellen Runde speichern
     current_round = {"species": None, "recording": None, "audio_player": None}
@@ -1284,6 +1425,9 @@ def end_game(game_window):
 
         # Statt die Widgets direkt zu griden, speichern wir sie in einer Liste
         meter_widgets.append((stats_label, meter))
+
+    # plotte finale Matrix
+    print(plot_final_stats_matrix(final_stats_matrix))
 
     # Funktion, die die Widgets abhängig von der Breite von species_frame anordnet
     def arrange_meters(event=None):
