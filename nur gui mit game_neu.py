@@ -103,125 +103,155 @@ def get_random_recording(species, record_type, sex_type, lifestage_type):
 
 def cache_bird_images(species_list):
     """
-    Given a list of Latin (scientific) names, attempt to download and locally cache up to 10 images
-    for each bird into 'bird_cache/<latin_name>'.
+    For each species in species_list:
+      1) Skip caching if 'bird_cache/<latin_name>/metadata.json' exists.
+      2) Search English Wikipedia for a page title (list=search).
+      3) Use 'pageimages' to get the lead thumbnail (pithumbsize=300) + file name.
+      4) Query the file's license/author via 'imageinfo&extmetadata'.
+      5) Download the thumbnail as image_0.jpg.
+      6) Store metadata.json with: filename, license, author.
 
-    - If 'bird_cache/<latin_name>' and 'metadata.json' already exist, skip caching for that species.
-    - Otherwise, query Wikimedia Commons for up to 10 file URLs.
-    - Save each image locally (image_0.jpg, image_1.jpg, ...).
-    - Create a 'metadata.json' with license & author info for each image.
-
-    After this, you can use your fetch_bird_image_from_commons(...) function (or similar)
-    to randomly select and display one of the locally cached images.
+    This downloads exactly ONE image per species. You can later load it
+    and display the license & author info as needed.
     """
-    # Prepare HTTP headers (important to avoid 403 blocks)
-    headers = {
-        "User-Agent": "BirdQuizBot/1.0 (+https://your-website.example)"
-    }
+    WIKIPEDIA_API = "https://en.wikipedia.org/w/api.php"
+    HEADERS = {"User-Agent": "WikiBirdBot/1.0 (+https://your-website.example)"}
 
-    # API endpoint (Wikimedia Commons)
-    endpoint = "https://commons.wikimedia.org/w/api.php"
+    # Ensure the main cache directory exists
+    os.makedirs("bird_cache", exist_ok=True)
 
-    for latin_name in species_list:
-        # Create directory name (replace spaces with underscores)
-        safe_name = latin_name.replace("+", "_")
-        safe_name = safe_name.replace(" ", "_")
-        safe_name = safe_name.lower()
+    for species in species_list:
+        # Create a folder name, e.g. "parus_major"
+        safe_name = species.replace("+", "_").replace(" ", "_").lower()
         cache_dir = os.path.join("bird_cache", safe_name)
         metadata_file = os.path.join(cache_dir, "metadata.json")
+        image_file = os.path.join(cache_dir, "image_0.jpg")
 
-        # If the directory + metadata.json exist, assume it's already cached
+        # If this species is already cached, skip
         if os.path.exists(cache_dir) and os.path.exists(metadata_file):
-            print(f"Images for '{latin_name}' are already cached. Skipping...")
+            print(f"Images for '{species}' are already cached. Skipping...")
             continue
 
-        # Otherwise, create or clean the cache directory
+        # Otherwise, ensure a clean directory
         if os.path.exists(cache_dir):
-            # If the folder exists but no metadata.json, you may decide to remove
-            # old partial data or just reuse the folder. For safety, let's start fresh.
             shutil.rmtree(cache_dir)
         os.makedirs(cache_dir, exist_ok=True)
 
-        # Parameters to get up to 10 files in the File namespace
-        params = {
+        print(f"[INFO] Caching the lead Wikipedia image for '{species}'...")
+
+        # 1) Search for the Wikipedia page
+        species_search_term = species.replace("+", " ").replace("_", " ").lower()
+        print(species_search_term)
+        search_params = {
             "action": "query",
-            "generator": "search",
-            "gsrsearch": latin_name,
-            "gsrnamespace": 6,  # File namespace
-            "gsrlimit": 10,
-            "prop": "imageinfo",
-            "iiprop": "url|extmetadata",
-            # If you want server-scaled images, uncomment:
-            # "iiurlwidth": 300,
-            # "iiurlheight": 300,
+            "list": "search",
+            "srsearch": f"{species_search_term} +bird -chimp -ape -Pan",
             "format": "json"
         }
-
-        print(f"Caching images for '{latin_name}'...")
         try:
-            resp = requests.get(endpoint, headers=headers, params=params)
+            resp = requests.get(WIKIPEDIA_API, headers=HEADERS, params=search_params)
             data = resp.json()
         except Exception as e:
-            print(f"Error searching for '{latin_name}': {e}")
+            print(f"[ERROR] Searching '{species}': {e}")
             continue
 
-        pages = data.get("query", {}).get("pages", {})
+        search_results = data.get("query", {}).get("search", [])
+        if not search_results:
+            print(f"[WARN] No Wikipedia page found for '{species}'.")
+            continue
+
+        page_title = search_results[0]["title"]
+        print(page_title)
+
+        # 2) Get the pageimage (thumbnail + file name)
+        image_params = {
+            "action": "query",
+            "prop": "pageimages",
+            "titles": page_title,
+            "piprop": "thumbnail|name",
+            "pithumbsize": 500,  # ~300 px wide
+            "format": "json"
+        }
+        try:
+            img_resp = requests.get(WIKIPEDIA_API, headers=HEADERS, params=image_params)
+            img_data = img_resp.json()
+        except Exception as e:
+            print(f"[ERROR] pageimages for '{page_title}': {e}")
+            continue
+
+        pages = img_data.get("query", {}).get("pages", {})
         if not pages:
-            print(f"No search results for {latin_name}.")
+            print(f"[WARN] No pages returned from pageimages for '{page_title}'.")
             continue
 
-        file_metadata = []
-        index = 0
+        thumbnail_url = None
+        file_name = None
+        for _, page_info in pages.items():
+            thumb = page_info.get("thumbnail")
+            page_img_name = page_info.get("pageimage")  # e.g. "BlueTit.jpg"
+            if thumb and page_img_name:
+                thumbnail_url = thumb.get("source")
+                file_name = "File:" + page_img_name
+                break
 
-        # Iterate over results, download up to 10 images
-        for page_id, info in pages.items():
-            imageinfo = info.get("imageinfo", [])
-            if not imageinfo:
+        if not thumbnail_url or not file_name:
+            print(f"[WARN] No thumbnail or file name found for '{page_title}'.")
+            continue
+
+        # 3) Fetch license & author from the File:* page
+        file_params = {
+            "action": "query",
+            "titles": file_name,
+            "prop": "imageinfo",
+            "iiprop": "extmetadata",
+            "format": "json"
+        }
+        try:
+            file_resp = requests.get(WIKIPEDIA_API, headers=HEADERS, params=file_params)
+            file_json = file_resp.json()
+        except Exception as e:
+            print(f"[ERROR] Fetching file metadata for '{file_name}': {e}")
+            continue
+
+        file_pages = file_json.get("query", {}).get("pages", {})
+        license_str = ""
+        author_str = ""
+        for _, fpage_info in file_pages.items():
+            imageinfo_list = fpage_info.get("imageinfo", [])
+            if not imageinfo_list:
+                continue
+            extmetadata = imageinfo_list[0].get("extmetadata", {})
+            license_str = extmetadata.get("LicenseShortName", {}).get("value", "")
+            author_str = extmetadata.get("Artist", {}).get("value", "")
+            break
+
+        # 4) Download the thumbnail
+        try:
+            r = requests.get(thumbnail_url, headers=HEADERS)
+            if r.status_code != 200:
+                print(f"[ERROR] Could not download image from {thumbnail_url}, code={r.status_code}")
                 continue
 
-            file_data = imageinfo[0]
-            file_url = file_data.get("url")
-            extmeta = file_data.get("extmetadata", {})
-            license_short = extmeta.get("LicenseShortName", {}).get("value", "")
-            author = extmeta.get("Artist", {}).get("value", "")
+            with open(image_file, "wb") as f:
+                f.write(r.content)
+        except Exception as e:
+            print(f"[ERROR] Downloading thumbnail for '{species}': {e}")
+            continue
 
-            if not file_url:
-                continue
-
-            try:
-                r = requests.get(file_url, headers=headers)
-                if r.status_code != 200:
-                    print(f"Failed to download image from {file_url}")
-                    continue
-
-                local_filename = f"image_{index}.jpg"
-                local_path = os.path.join(cache_dir, local_filename)
-
-                with open(local_path, "wb") as f:
-                    f.write(r.content)
-
-                file_metadata.append({
-                    "filename": local_filename,
-                    "license": license_short,
-                    "author": author
-                })
-
-                index += 1
-                if index >= 5:
-                    break
-            except Exception as e:
-                print(f"Error downloading '{file_url}': {e}")
-
-        # Save metadata if we have any images
-        if file_metadata:
+        # 5) Write metadata.json
+        file_metadata = [{
+            "filename": os.path.basename(image_file),
+            "license": license_str,
+            "author": author_str
+        }]
+        try:
             with open(metadata_file, "w", encoding="utf-8") as f:
                 json.dump(file_metadata, f, ensure_ascii=False, indent=2)
-            print(f"Cached {len(file_metadata)} images for '{latin_name}'.")
-        else:
-            # If no images, remove the newly created folder
-            if os.path.exists(cache_dir):
-                shutil.rmtree(cache_dir)
-            print(f"No images were cached for '{latin_name}'.")
+            print(f"[OK] Cached image+metadata for '{species}': {image_file}")
+        except Exception as e:
+            print(f"[ERROR] Writing metadata.json for '{species}': {e}")
+            # In case of error, optionally remove partial cache
+            # shutil.rmtree(cache_dir)
 
 
 def clear_bird_cache(): #heruntergeladene Bilder werden gelöscht. Aktuell nicht genutzte Funktion
@@ -452,19 +482,18 @@ def NewSet():
             inner = tk.Frame(sf)
             inner.pack(fill="both", expand=True)
 
+   
+
     label_species_list = tb.Label(inner, text="Welche Arten möchtest du üben? (Komma getrennt)",
                                   font=("Arial", 12))
     label_species_list.grid(row=0, column=0, columnspan=2, padx=10, pady=10, sticky="nsew")
 
     #Artenauswahl
-    # Frame für Auswahleinträge
-    list_frame = tb.Frame(inner)
-    list_frame.grid(row=1, column=0, sticky="ew", padx=10, pady=10)
-    list_frame.grid_columnconfigure(0, weight=1) # Spalte 0 (Entry) soll sich ausdehnen:
-    list_frame.grid_columnconfigure(1, weight=0) # Spalte 1 (Menubutton) bleibt in ihrer natürlichen Größe:
+
     #Entry für Arten
-    species_list_entry = tb.Entry(list_frame)
-    species_list_entry.grid(row=0, column=0, padx=(10, 0), pady=10, sticky="ew")
+    species_list_entry = tb.Entry(inner)
+    species_list_entry.grid(row=1, column=0, padx=(10, 0), pady=10, sticky="ew")
+
 
     # Funktion zum automatisches Einfügen der Arten in das Entry-Feld
     item_var = tk.StringVar() # Variable für die Menüauswahl
@@ -475,13 +504,14 @@ def NewSet():
 
         # Definiere die Arten für verschiedene Lebensräume
         habitat_species = {
-            "Lebensraum Laubwald": "Blaumeise, Rotkehlchen, Zaunkönig, Laubsänger",
-            "Lebensraum Nadelwald": "Tannenmeise, Haubenmeise, Fichtenkreuzschnabel, Waldbaumläufer",
-            "Lebensraum Feuchtgebiet": "Eisvogel, Rohrammer, Teichrohrsänger, Zwergtaucher",
-            "Lebensraum Gebirge": "Alpendohle, Steinadler, Mauerläufer, Bergpieper",
-            "Lebensraum Küste": "Austernfischer, Silbermöwe, Sandregenpfeifer, Brandgans",
-            "Verwechselbare Arten": "Singdrossel, Ringdrossel",
-            "Artengruppe Mitteleuropäische Grasmücken": "Mönchsgrasmücke, Gartengrasmücke, Klappergrasmücke, Dorngrasmücke, Sperbergrasmücke"
+            "Lebensraum Laubwald": "Blaumeise, Rotkehlchen, Singdrossel, Zaunkönig, Waldlaubsänger, Trauerschnäpper, Kohlmeise, Buntspecht, Gimpel, Zilpzalp, Mönchsgrasmücke, Kleiber",
+            "Lebensraum Nadelwald": "Tannenmeise, Haubenmeise, Erlenzeisig, Fichtenkreuzschnabel, Waldbaumläufer, Wintergoldhähnchen",
+            "Lebensraum Offenland/Agrarlandschaft": "Feldlerche, Rebhuhn, Neuntöter, Schwarzkehlchen, Dorngrasmücke, Grauammer, Goldammer, Feldsperling, Mäusebussard",
+            "Lebensraum Siedlung": "Haussperling, Hausrotschwanz, Blaumeise, Bachstelze, Kohlmeise, Amsel, Feldsperling, Grünfink, Star, Buchfink, Elster",
+            "Lebensraum Auenwald": "Pirol, Nachtigall, Kleinspecht, Mittelspecht, Trauerschnäpper, Kohlmeise, Blaumeise, Kleiber, Schwarzspecht, Buchfink",
+            "Lebensraum Feuchtgebiet Binnenland": "Bartmeise, Sumpfrohrsänger, Schilfrohrsänger, Eisvogel, Rohrammer, Teichrohrsänger, Zwergtaucher, Waldwasserläufer, Kiebitz",
+            "Lebensraum Alpine Zone": "Alpendohle, Mauerläufer, Bergpieper, Birkenzeisig, Hausrotschwanz, Alpenbraunelle",
+            "Lebensraum Küste (typische Arten)": "Austernfischer, Silbermöwe, Sandregenpfeifer, Brandgans, Lachmöwe, Alpenstrandläufer, Rotschenkel, Eiderente"
         }
 
         # Falls die Auswahl existiert, ins Entry-Feld eintragen
@@ -489,8 +519,8 @@ def NewSet():
         species_list_entry.insert(0, habitat_species.get(selection, ""))
 
     # Menubutton für die spezifischen Listen
-    specific_list = tb.Menubutton(list_frame, text="Spezifische Artenliste", bootstyle="success-outline")
-    specific_list.grid(row=0, column=1, padx=(5, 10), pady=10, sticky="w")
+    specific_list = tb.Menubutton(inner, text="Spezifische Habitat-Arten", bootstyle="success-outline")
+    specific_list.grid(row=2, column=0, padx=(5, 10), pady=10, sticky="w")
 
     # Menü mit Radiobuttons erstellen
     inside_specific_menu = tk.Menu(specific_list, tearoff=0)
@@ -498,16 +528,79 @@ def NewSet():
     # Lebensräume zur Auswahl hinzufügen
     habitats = [
         "Lebensraum Laubwald",
-        "Lebensraum Nadelwald",
-        "Lebensraum Feuchtgebiet",
-        "Lebensraum Gebirge",
-        "Lebensraum Küste"]
+            "Lebensraum Nadelwald",
+            "Lebensraum Offenland/Agrarlandschaft",
+            "Lebensraum Siedlung",
+            "Lebensraum Auenwald",
+            "Lebensraum Feuchtgebiet Binnenland",
+            "Lebensraum Alpine Zone",
+            "Lebensraum Küste (typische Arten)",
+            ]
 
     # Menüeinträge mit Radiobuttons
     for habitat in habitats:
         inside_specific_menu.add_radiobutton(label=habitat, variable=item_var, value=habitat, command=set_species_list)
 
     specific_list["menu"] = inside_specific_menu
+
+
+    # Funktion zum Setzen der Artenliste basierend auf der Auswahl
+    def set_species_list_group():
+        selection = item_var.get()  # Aktuelle Auswahl aus dem Menü
+
+        # Definiere die Arten für verschiedene Lebensräume
+        group_species = {
+            "Artengruppe Watvögel": "Rotschenkel, Grünschenkel, Flussuferläufer, Waldwasserläufer, Bruchwasserläufer, Dunkler Wasserläufer, Alpenstrandläufer, Sandregenpfeifer",
+            "Artengruppe Drosseln": "Singdrossel, Ringdrossel, Amsel, Misteldrossel",
+            "Artengruppe mitteleuropäische Grasmücken": "Mönchsgrasmücke, Gartengrasmücke, Klappergrasmücke, Dorngrasmücke, Sperbergrasmücke",
+            "Artengruppe Meisen": "Blaumeise, Kohlmeise, Sumpfmeise, Weidenmeise, Tannenmeise, Schwanzmeise, Haubenmeise",
+            "Artengruppe Spechte": "Buntspecht, Kleinspecht, Schwarzspecht, Weißrückenspecht, Dreizehenspecht, Grünspecht, Grauspecht, Mittelspecht",
+            "Artengruppe Möwen": "Silbermöwe, Lachmöwe, Heringsmöwe, Mantelmöwe, Sturmmöwe",
+            "Artengruppe Eulen": "Waldkauz, Waldohreule, Uhu, Sperlingskauz, Raufußkauz, Schleiereule",
+            "Artengruppe Rohrsänger": "Teichrohrsänger, Sumpfrohrsänger, Drosselrohrsänger, Schilfrohrsänger",
+            "Artengruppe Greifvögel": "Sperber, Turmfalke, Mäusebussard, Habicht, Rotmilan, Rohrweihe",
+            "Artengruppe Enten": "Stockente, Krickente, Knäkente, Reiherente, Schnatterente, Löffelente, Pfeifente, Tafelente, Schellente",
+            "Artengruppe Laubsänger": "Zilpzalp, Fitis, Waldlaubsänger, Berglaubsänger",
+            "Artengruppe Schnäpper": "Trauerschnäpper, Grauschnäpper, Halsbandschnäpper, Zwergschnäpper",
+            "Artengruppe Ammern": "Goldammer, Grauammer, Zippammer, Zaunammer",
+            "Artengruppe Singvogelzug": "Buchfink, Bergfink, Heckenbraunelle, Singdrossel, Rotdrossel, Feldlerche, Wacholderdrossel, Heidelerche, Haubenlerche, Baumpieper, Wiesenpieper, Erlenzeisig",
+            "Artengruppe Pieper": "Baumpieper, Wiesenpieper, Bergpieper, Rotkehlpieper, Brachpieper, Waldpieper"
+        }
+
+        # Falls die Auswahl existiert, ins Entry-Feld eintragen
+        species_list_entry.delete(0, tk.END)
+        species_list_entry.insert(0, group_species.get(selection, ""))
+
+    # Menubutton für die spezifischen Artengruppen- Listen
+    specific_group_list = tb.Menubutton(inner, text="Spezifische Artenliste", bootstyle="success-outline")
+    specific_group_list.grid(row=2, column=1, padx=(5, 10), pady=10, sticky="w")
+
+    # Menü mit Radiobuttons erstellen
+    inside_specific_group_menu = tk.Menu(specific_group_list, tearoff=0)
+
+    # Lebensräume zur Auswahl hinzufügen
+    groups = [
+            "Artengruppe Watvögel",
+            "Artengruppe Drosseln",
+            "Artengruppe mitteleuropäische Grasmücken",
+            "Artengruppe Meisen",
+            "Artengruppe Spechte",
+            "Artengruppe Möwen",
+            "Artengruppe Eulen",
+            "Artengruppe Rohrsänger",
+            "Artengruppe Greifvögel",
+            "Artengruppe Enten",
+            "Artengruppe Laubsänger",
+            "Artengruppe Schnäpper",
+            "Artengruppe Ammern",
+            "Artengruppe Singvogelzug",
+            "Artengruppe Pieper"]
+
+    # Menüeinträge mit Radiobuttons
+    for group in groups:
+        inside_specific_group_menu.add_radiobutton(label=group, variable=item_var, value=group, command=set_species_list_group)
+
+    specific_group_list["menu"] = inside_specific_group_menu
 
 
 
@@ -584,7 +677,7 @@ def NewSet():
     selected_sex = tb.Combobox(inner, bootstyle="success", values=sex, textvariable=sex_type)
     selected_sex['state'] = 'readonly'
     selected_sex.set("All Gender")
-    selected_sex.grid(row=5, column=0, padx=10, pady=20)
+    selected_sex.grid(row=5, column=0, padx=10, pady=20, sticky= "e")
 
     lifestage_type = StringVar(value="")
     lifestage = ["All Stages", "Adult", "Juvenile", "Nestling"]
@@ -733,7 +826,7 @@ def gamestart(species_list):
     audio_progress.start(15)
 
     # Copyright_Info-Button
-    game_window.info_button = tb.Button(audio_frame, text="?", bootstyle="light-link")
+    game_window.info_button = tb.Button(audio_frame, text="©Recording", bootstyle="light-link")
     game_window.info_button.grid(row=1, column=0, padx=10)
     game_window.info_button.tooltip = ToolTip(game_window.info_button, text="Keine Info verfügbar", bootstyle=(LIGHT, INVERSE))
 
@@ -929,7 +1022,7 @@ def gamestart(species_list):
             #Hier werden die Bilder geladen und lokal gespeichert
             print(settings.get("image"))
             if settings.get("image") == 1:
-                cache_bird_images(species_options)
+                cache_bird_images(canonical_species)
 
             def update_ui(recording):
                 # Falls der Lade-Container noch existiert, entferne ihn vollständig
@@ -1114,14 +1207,45 @@ def end_game(game_window):
     #results_window.geometry("1200x800") # Window Größe manuell definiert
     results_window.state("zoomed")
 
-    # Gesamtübersicht oben
-    total_score_label = tb.Label(
+    header_label = tb.Label(
         results_window,
-        text=(f"Richtige Antworten (gesamt): {correct_total}\n"
-              f"Falsche Antworten (gesamt): {wrong_total}"),
-        font=("Arial", 12)
+        text="Gesamtstatistik",
+        font=("Helvetica", 16, "bold")
     )
-    total_score_label.pack(pady=20)
+    header_label.pack(pady=10)  # Überschrift mit Abstand nach unten
+
+    # Erstelle ein Frame für Label und Meter (damit sie nebeneinander stehen)
+    total_frame = tb.Frame(results_window)
+    total_frame.pack(pady=20)  # Gesamt-Frame für bessere Anordnung
+
+    # Gesamtübersicht schriftlich (links im Frame)
+    total_score_label = tb.Label(
+        total_frame,
+        text=(f"Richtige Antworten: {correct_total}\n"
+              f"Falsche Antworten: {wrong_total}"),
+        font=("Helvetica", 10),
+        anchor="w"
+    )
+    total_score_label.pack(side="left", padx=20)  # Links platzieren, Abstand nach rechts
+
+    # Gesamtübersicht Meter (rechts im Frame)
+    total_attempts_gesamt = correct_total + wrong_total
+
+    if total_attempts_gesamt == 0:
+        percentage_gesamt = 0
+    else:
+        percentage_gesamt = round((correct_total / total_attempts_gesamt) * 100)
+
+    meter_gesamt = tb.Meter(
+        total_frame,
+        bootstyle="warning",
+        amountused=percentage_gesamt,
+        amounttotal=100,
+        metersize=150,
+        textright="%",
+        subtext="Gesamt Richtig"
+    )
+    meter_gesamt.pack(side="right", padx=20)  # Rechts platzieren, Abstand nach links
 
     # Labelframe für die einzelnen Arten
     species_frame = tb.Labelframe(results_window, text="Ergebnisse pro Art", bootstyle="success")
@@ -1182,8 +1306,8 @@ def end_game(game_window):
     arrange_meters()
 
     # Schließen-Button
-    close_button = tb.Button(results_window, text="Fenster schließen", command=results_window.destroy)
-    close_button.pack(pady=20)
+    close_button = tb.Button(results_window, text="Fenster schließen", command=results_window.destroy, bootstyle = "info")
+    close_button.pack(pady=20, anchor="center")
 
 
 
