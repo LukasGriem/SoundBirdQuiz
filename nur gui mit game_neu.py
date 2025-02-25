@@ -5,6 +5,7 @@ from ttkbootstrap.tooltip import ToolTip
 from ttkbootstrap.scrolled import ScrolledFrame
 import tkinter as tk
 from tkinter import Frame
+from tkinter import Canvas, Scrollbar
 from PIL import Image, ImageTk, ImageSequence
 if not hasattr(Image, "CUBIC"):
     Image.CUBIC = Image.BICUBIC
@@ -25,6 +26,7 @@ import time
 import numpy as np
 import seaborn as sns
 import matplotlib.pyplot as plt
+from bs4 import BeautifulSoup
 
 
 # Globaler Cache für API-Antworten
@@ -367,6 +369,14 @@ def fetch_and_display_sonogram(sonogram_url, label):
     except Exception as e:
         print(f"Error fetching sonogram: {e}")
 
+def show_placeholder(label):
+    # Erzeuge ein Placeholder-Bild von 400x300-Bild
+    placeholder_img = Image.new("RGB", (300, 200), color="#2B3E50")
+    placeholder_photo = ImageTk.PhotoImage(placeholder_img)
+    label.config(image=placeholder_photo)
+    label.image = placeholder_photo
+    # WICHTIG: Referenz behalten, damit das Bild nicht vom Garbage Collector gelöscht wird
+
 
 class AnimatedGIF(tk.Label):
     def __init__(self, master, gif_path, delay=100, **kwargs):
@@ -391,6 +401,8 @@ class AnimatedGIF(tk.Label):
         self.running = False
         if hasattr(self, 'after_id'):
             self.after_cancel(self.after_id)
+
+
 
 def plot_final_stats_matrix(matrix, save_path=None):
     """
@@ -437,8 +449,8 @@ def plot_final_stats_matrix(matrix, save_path=None):
 
     # Set tick labels in white
     ax.tick_params(colors='white')
-    plt.xticks(rotation=45,ha='left', fontsize=8, color='white')
-    plt.yticks(rotation=0, fontsize=8, color='white')
+    plt.xticks(rotation=45,ha='left', fontsize=11, color='white')
+    plt.yticks(rotation=0, fontsize=11, color='white')
 
     # Ensure equal aspect ratio for quadratic cells
     ax.set_aspect('equal')
@@ -447,9 +459,98 @@ def plot_final_stats_matrix(matrix, save_path=None):
 
 
     # Save PNG with transparent background (for GUI integration)
-    save_path = "bird_cache/fig1.png"
+    save_path = "matrix_plot.png"
     if save_path:
         plt.savefig(save_path, transparent=True, dpi=300)
+
+def load_matrix_image(tab_matrix):
+    try:
+        image_path = "matrix_plot.png"  # Speicherpfad aus der Plot-Funktion
+        image = Image.open(image_path)
+
+        # Frame für den Canvas, der sich automatisch an die Größe des Tabs anpasst
+        frame_canvas = tb.Frame(tab_matrix)
+        frame_canvas.pack(fill="both", expand=True, padx=10, pady=10)
+        frame_canvas.columnconfigure(0, weight=1)
+        frame_canvas.rowconfigure(0, weight=1)
+
+        # Canvas, der den gesamten Platz einnimmt
+        canvas = Canvas(frame_canvas, bg="white")
+        canvas.grid(row=0, column=0, sticky="nsew")
+
+        # update_image passt das Bild an die Höhe des frame_canvas an und zentriert es
+        def update_image(event=None):
+            frame_width = frame_canvas.winfo_width()
+            frame_height = frame_canvas.winfo_height()
+            if frame_width > 0 and frame_height > 0:
+                img_width, img_height = image.size
+                # Skalierungsfaktor basierend auf der Höhe (das Bild kann auch vergrößert werden)
+                scale_factor = frame_height / img_height
+                new_width = int(img_width * scale_factor)
+                new_height = int(img_height * scale_factor)
+                image_resized = image.resize((new_width, new_height), Image.LANCZOS)
+                img_tk = ImageTk.PhotoImage(image_resized)
+                canvas.delete("all")
+                # Bild genau in die Mitte des Canvas legen:
+                canvas.create_image(frame_width // 2, frame_height // 2, anchor="center", image=img_tk)
+                canvas.img_tk = img_tk  # Referenz speichern
+                canvas.config(scrollregion=canvas.bbox("all"))
+
+        # update_image wird immer dann aufgerufen, wenn sich der frame_canvas ändert
+        frame_canvas.bind("<Configure>", update_image)
+        update_image()  # Initialer Aufruf
+
+
+    except Exception as e:
+        print("Fehler beim Laden des Matrix-Bildes:", e)
+
+
+def open_fullscreen_image(image):
+    fs = tb.Toplevel()
+    fs.state("zoomed")
+    fs.title("Vollbildansicht_Confusion-Matrix")
+
+    canvas_fs = Canvas(fs, bg="black")
+    canvas_fs.pack(fill="both", expand=True)
+
+    def update_fs(event=None):
+        width = canvas_fs.winfo_width()
+        height = canvas_fs.winfo_height()
+        # Falls das Fenster noch sehr klein ist, abbrechen (damit width/height nicht 0 sind)
+        if width < 50 or height < 50:
+            return
+        img_width, img_height = image.size
+        scale_factor = min(width / img_width, height / img_height)
+        new_width = max(1, int(img_width * scale_factor))
+        new_height = max(1, int(img_height * scale_factor))
+        img_resized = image.resize((new_width, new_height), Image.LANCZOS)
+        img_tk_fs = ImageTk.PhotoImage(img_resized)
+        canvas_fs.delete("all")
+        # Bild in der Mitte des Canvas platzieren:
+        canvas_fs.create_image(width // 2, height // 2, anchor="center", image=img_tk_fs)
+        canvas_fs.img_tk = img_tk_fs  # Referenz speichern
+        canvas_fs.config(scrollregion=canvas_fs.bbox("all"))
+
+    fs.bind("<Configure>", update_fs)
+    update_fs()
+
+
+def load_all_species_from_csv(csv_path="Europ_Species_3.csv"):
+    try:
+        species_df = pd.read_csv(csv_path)
+    except Exception as e:
+        print(f"Fehler beim Laden der CSV: {e}")
+        return []
+
+    # Hier nehmen wir an, dass die CSV eine Spalte "Deutsch" enthält
+    if "Deutsch" not in species_df.columns:
+        print("Spalte 'Deutsch' nicht in der CSV gefunden!")
+        return []
+
+    all_species = species_df["Deutsch"].dropna().unique().tolist()
+    all_species = [str(name).strip() for name in all_species]
+    return all_species
+
 
 
 
@@ -467,7 +568,7 @@ top_frame.pack(side="top", pady=10)
 
 # Logo laden und skalieren
 logo_original = Image.open("logoBQ3s.png")
-logo_resized = logo_original.resize((320, 250), Image.Resampling.LANCZOS)
+logo_resized = logo_original.resize((300, 230), Image.Resampling.LANCZOS)
 logo_img = ImageTk.PhotoImage(logo_resized)
 
 # Logo-Label im top_frame platzieren und zentrieren
@@ -487,9 +588,14 @@ my_subtitle.pack(pady=20)
 my_info = tb.Label(root, text="Audios von xeno-canto.org; Sound-BirdQuiz 2025 © L.Griem & J.Pieper", font=("Helvetica", 8))
 my_info.place(relx=0, rely=1, anchor="sw", x=40, y=-40)
 
-# Frame für die Buttons
+# Frame für die Einstellungs-Buttons
 button_frame = tb.Frame(root)
 button_frame.pack(pady=10)
+
+# Globale Variable für das Settings-Frame (initial None) -->Wichtig für Toolbutton Funktion bei "Neue Einstellungen"
+settings_frame = None
+# BooleanVar, die den Toggle-Status speichert -->Wichtig für Toolbutton Funktion bei "Neue Einstellungen"
+toggle_var = tk.BooleanVar(value=False)
 
 # Dateiname für das Speichern der Einstellungen
 settings_file = "settings.json"
@@ -521,30 +627,43 @@ def save_new_settings(species_list, var_spectro, var_image, record_type, sex_typ
 
 # Funktion für den Button "Neue Einstellungen"
 def NewSet():
-    settings_frame = tb.Frame(root)
-    settings_frame.pack(pady=10)
+    global settings_frame
+    if toggle_var.get():
+        # Nur einmal erstellen, falls noch nicht vorhanden
+        if settings_frame is None:
+            settings_frame = tb.Frame(root)
+            settings_frame.pack(pady=5)
 
-    settings_frame.grid_columnconfigure(0, weight=1)
-    settings_frame.grid_columnconfigure(1, weight=2)
+            outer_frame = tb.Frame(settings_frame, bootstyle="dark")
+            outer_frame.pack(fill=BOTH, expand=YES, padx=10, pady=5)
 
-    outer_frame = Frame(settings_frame, bg="grey", borderwidth=2, relief="groove")
-    outer_frame.pack(fill=BOTH, expand=YES, padx=10, pady=10)
-    sf = ScrolledFrame(outer_frame, height=300, width=1000)
-    sf.pack(fill=BOTH, expand=YES, padx=10, pady=10)
-    inner = tk.Frame(sf)
-    inner.pack(fill="both", expand=True)
+            sf = ScrolledFrame(outer_frame, height=300, width=1000)
+            sf.pack(fill=BOTH, expand=YES, padx=10, pady=10)
 
-   
+            inner = tb.Frame(sf)
+            inner.pack(fill="both", expand=True, padx=(5, 30), pady=10)
+    else:
+        # Beim Deaktivieren den Frame zerstören
+        if settings_frame is not None:
+            settings_frame.destroy()
+            settings_frame = None
+
+
 
     label_species_list = tb.Label(inner, text="Welche Arten möchtest du üben? (Komma getrennt)",
-                                  font=("Arial", 12))
-    label_species_list.grid(row=0, column=0, columnspan=2, padx=10, pady=10, sticky="nsew")
+                                  font=("Arial", 10))
+    label_species_list.pack(pady=1)
 
     #Artenauswahl
+    choose_species_frame = tb.Frame(inner)
+    choose_species_frame.pack(pady=5, fill=BOTH, expand=YES)
+    choose_species_frame.grid_columnconfigure(0, weight=1)
+    choose_species_frame.grid_columnconfigure(1, weight=1)
+    choose_species_frame.grid_columnconfigure(2, weight=1)
 
     #Entry für Arten
-    species_list_entry = tb.Entry(inner)
-    species_list_entry.grid(row=1, column=0, columnspan=3, padx=10, pady=10, sticky="ew")
+    species_list_entry = tb.Entry(choose_species_frame, bootstyle="secondary")
+    species_list_entry.grid(row=0, column=0, columnspan=3, padx=10, pady=5, sticky="nsew")
 
 
     # Funktion zum automatisches Einfügen der Arten in das Entry-Feld
@@ -570,9 +689,9 @@ def NewSet():
         species_list_entry.delete(0, tk.END)
         species_list_entry.insert(0, habitat_species.get(selection, ""))
 
-    # Menubutton für die spezifischen Listen
-    specific_list = tb.Menubutton(inner, text="Spezifische Habitat-Arten", bootstyle="success-outline")
-    specific_list.grid(row=2, column=0, padx=(5, 10), pady=10, sticky="w")
+    # Menubutton für die spezifischen Habitat Listen
+    specific_list = tb.Menubutton(choose_species_frame, text="Spezifische Habitate", bootstyle="success-outline")
+    specific_list.grid(row=1, column=0, padx=10, pady=10, sticky="nsew")
 
     # Menü mit Radiobuttons erstellen
     inside_specific_menu = tk.Menu(specific_list, tearoff=0)
@@ -624,8 +743,8 @@ def NewSet():
         species_list_entry.insert(0, group_species.get(selection, ""))
 
     # Menubutton für die spezifischen Artengruppen- Listen
-    specific_group_list = tb.Menubutton(inner, text="Spezifische Artenliste", bootstyle="success-outline")
-    specific_group_list.grid(row=2, column=1, padx=(5, 10), pady=10, sticky="w")
+    specific_group_list = tb.Menubutton(choose_species_frame, text="Spezifische Artenliste", bootstyle="success-outline")
+    specific_group_list.grid(row=1, column=1, padx=10, pady=10, sticky="nsew")
 
     # Menü mit Radiobuttons erstellen
     inside_specific_group_menu = tk.Menu(specific_group_list, tearoff=0)
@@ -640,7 +759,7 @@ def NewSet():
         "Laubsänger",
         "Meisen",
         "Mitteleuropäische Grasmücken",
-        "Möwen"
+        "Möwen",
         "Pieper",
         "Rohrsänger",
         "Schnäpper",
@@ -702,8 +821,8 @@ def NewSet():
             other_combobox.pack_forget()  # Combobox verstecken
 
     # Menubutton für die spezifischen Listen
-    similar_list = tb.Menubutton(inner, text="Verwechselbare Arten", bootstyle="success-outline")
-    similar_list.grid(row=2, column=2, padx=(5, 10), pady=10, sticky="w")
+    similar_list = tb.Menubutton(choose_species_frame, text="Verwechselbare Arten", bootstyle="success-outline")
+    similar_list.grid(row=1, column=2, padx=10, pady=10, sticky="nsew")
 
     # Menü mit Radiobuttons erstellen
     inside_similar_list_menu = tk.Menu(similar_list, tearoff=0)
@@ -724,22 +843,29 @@ def NewSet():
 
     similar_list["menu"] = inside_similar_list_menu
 
+    #Frame für Spektro/Bild
+    visual_frame = tb.Frame(inner)
+    visual_frame.pack(pady=15)
+
     # Checkbox für Spektrogramm
     var_spectro = IntVar()
-    spectro_check = tb.Checkbutton(inner, bootstyle="success-round-toggle", text="Spektrogramm anzeigen",
+    spectro_check = tb.Checkbutton(visual_frame, bootstyle="success-round-toggle", text="Spektrogramm anzeigen",
                                    variable=var_spectro, onvalue=1, offvalue=0)
-    spectro_check.grid(row=3, column=0, padx=50, pady=10)
+    spectro_check.pack(side=LEFT, padx=10, pady=10)
 
     # Checkbox für Bild
     var_image = IntVar()
-    image_check = tb.Checkbutton(inner, bootstyle="success-round-toggle", text="Bild anzeigen",
+    image_check = tb.Checkbutton(visual_frame, bootstyle="success-round-toggle", text="Bild anzeigen",
                                  variable=var_image, onvalue=1, offvalue=0)
-    image_check.grid(row=3, column=1, padx=50, pady=10)
+    image_check.pack(side=LEFT, padx=40, pady=10)
 
     # Radiobuttons für Aufnahmetyp (gemeinsame Variable=record_type)
     # Container-Frame für Radiobuttons und Combobox
-    radio_frame = tb.Frame(inner)
-    radio_frame.grid(row=4, column=0, columnspan=3, padx=50, pady=10)
+    radio_frame = tb.Labelframe(inner, bootstyle="success",text="Audiotyp wählen")
+    radio_frame.pack(pady=10, fill=BOTH, expand=YES)
+    radio_frame.grid_columnconfigure(0, weight=1)
+    radio_frame.grid_columnconfigure(1, weight=1)
+    radio_frame.grid_columnconfigure(2, weight=1)
 
     record_type = StringVar(value="All_type")  # Standard: Alle
 
@@ -748,25 +874,25 @@ def NewSet():
                                 text="Alle üben",
                                 variable=record_type,
                                 value="All_type")
-    all_radio.pack(side=LEFT, padx=10)
+    all_radio.grid(row=0, column=0, padx=(1,10), pady=10)
 
     call_radio = tb.Radiobutton(radio_frame, bootstyle="success",
                                 text="Call üben",
                                 variable=record_type,
                                 value="Call")
-    call_radio.pack(side=LEFT, padx=10)
+    call_radio.grid(row=0, column=1, padx=10, pady=10)
 
     song_radio = tb.Radiobutton(radio_frame, bootstyle="success",
                                 text="Song üben",
                                 variable=record_type,
                                 value="Song")
-    song_radio.pack(side=LEFT, padx=10)
+    song_radio.grid(row=0, column=2, padx=10, pady=10)
 
     other_radio = tb.Radiobutton(radio_frame, bootstyle="success",
-                                 text="Anderer Sound-Typ",
+                                 text="Specific Sound-Typ",
                                  variable=record_type,
                                  value="Other")
-    other_radio.pack(side=LEFT, padx=10)
+    other_radio.grid(row=1, column=0, padx=(55,5), pady=(20,10))
 
     # Combobox – zunächst ausgeblendet
     custom_record_type = StringVar(value="")  # Diese Variable speichert den benutzerdefinierten Wert
@@ -774,14 +900,15 @@ def NewSet():
     other_combobox["values"] = ["Alarm call", "Begging call", "Drumming", "Female song", "Flight call", "Imitation", "Subsong"]
     other_combobox.set("Bitte auswählen")
     other_combobox['state'] = 'readonly'
-    other_combobox.pack_forget()
+    other_combobox.grid_forget()
+    #other_combobox.pack(side=LEFT, padx=10) #Wenn nicht ausgeblendet werden soll (pack_forget weg und der ganze Callback)
 
     # Callback, der die Combobox ein- oder ausblendet, je nachdem, ob "Other" gewählt ist.
     def on_record_type_change(*args):
         if record_type.get() == "Other":
-            other_combobox.pack(side=LEFT, padx=10)  # anzeigen
+            other_combobox.grid(row=1, column=1, padx=5, pady=10)  # anzeigen
         else:
-            other_combobox.pack_forget()  # verstecken
+            other_combobox.grid_forget()  # verstecken
 
     record_type.trace("w", on_record_type_change)
 
@@ -791,20 +918,38 @@ def NewSet():
 
     other_combobox.bind("<<ComboboxSelected>>", on_other_selected)
 
+    #Sex/Lifestage festlegen
+    # Callback, der die Combobox ein- oder ausblendet, je nachdem, ob "Other" gewählt ist.
+    def on_sex_stage_change(*args):
+        if sex_stage_var.get() == 1:
+            selected_sex.grid(row=2, column=1, padx=5, pady=10)  # anzeigen
+            selected_lifestage.grid(row=2, column=2, padx=5, pady=20)
+        else:
+            selected_sex.grid_forget()  # verstecken
+            selected_lifestage.grid_forget()
+
+    sex_stage_var = IntVar()
+    sex_stage_check = tb.Checkbutton(radio_frame, bootstyle="success-round-toggle",
+                               text="Specify sex/lifestage", variable=sex_stage_var, onvalue=1, offvalue=0,  command=on_sex_stage_change)
+    sex_stage_check.grid(row=2, column=0, padx=(75,5), pady=30)
+
+
     #Combobutton für Geschlecht und Lifestage
     sex_type = StringVar(value="")
-    sex = ["All Gender", "Male", "Female"]
-    selected_sex = tb.Combobox(inner, bootstyle="success", values=sex, textvariable=sex_type)
+    sex = ["All sex", "Male", "Female"]
+    selected_sex = tb.Combobox(radio_frame, bootstyle="success", values=sex, textvariable=sex_type)
     selected_sex['state'] = 'readonly'
-    selected_sex.set("All Gender")
-    selected_sex.grid(row=5, column=0, padx=10, pady=20, sticky= "e")
+    selected_sex.set("All sex")
+    selected_sex.grid(row=2, column=1, padx=5, pady=10)
+    selected_sex.grid_forget()
 
     lifestage_type = StringVar(value="")
-    lifestage = ["All Stages", "Adult", "Juvenile", "Nestling"]
-    selected_lifestage = tb.Combobox(inner, bootstyle="success", value=lifestage, textvariable=lifestage_type)
+    lifestage = ["All lifestage", "Adult", "Juvenile", "Nestling"]
+    selected_lifestage = tb.Combobox(radio_frame, bootstyle="success", value=lifestage, textvariable=lifestage_type)
     selected_lifestage['state'] = 'readonly'
-    selected_lifestage.set("All Stages")
-    selected_lifestage.grid(row=5, column=1, padx=10, pady=20)
+    selected_lifestage.set("All lifestage")
+    selected_lifestage.grid(row=2, column=2, padx=5, pady=20)
+    selected_lifestage.grid_forget()
 
     def save_and_start():
         # Falls "Other" gewählt ist, überschreibe record_type mit dem aktuellen Wert der Combobox
@@ -816,16 +961,16 @@ def NewSet():
             print("record_type überschrieben mit:", new_value)
         if record_type.get() == "All_type":
             record_type.set ("")
-        if sex_type.get() == "All Gender":
+        if sex_type.get() == "All sex":
             sex_type.set ("")
-        if lifestage_type.get() == "All Stages":
+        if lifestage_type.get() == "All lifestage":
             lifestage_type.set ("")
         species_list = species_list_entry.get()
         save_new_settings(species_list, var_spectro, var_image, record_type,sex_type, lifestage_type)
         settings_frame.pack_forget()  # Formular ausblenden
 
 
-    save_button = tb.Button(settings_frame, text="Einstellungen speichern und Spiel starten", bootstyle=SUCCESS,
+    save_button = tb.Button(settings_frame, text="Einstellungen speichern und Spiel starten", bootstyle="success",
                             command=save_and_start)
     save_button.pack(pady=10)
 
@@ -848,12 +993,47 @@ def load_old_settings():
         gamestart("")
 
 
+def shuffle_settings():
+    # Lade die vollständige Artenliste (deutsche Namen) direkt aus der CSV
+    all_species = load_all_species_from_csv()
+    if not all_species:
+        print("Keine Arten gefunden!")
+        return
+
+    # Wähle zufällig 10 Arten aus
+    species_list = random.sample(all_species, 10)
+
+    # Setze Spectrogram und Image automatisch auf 1
+    var_spectro = 1
+    var_image = 1
+
+    settings = {
+        "species_list": ",".join(species_list),
+        "spectrogram": var_spectro,
+        "image": var_image,
+        "record_type": "",
+        "sex_type": "",
+        "lifestage_type": ""
+    }
+    with open(settings_file, "w") as f:
+        json.dump(settings, f)
+
+    print("Shuffle Settings: Zufällig ausgewählte Arten:")
+    print(species_list)
+
+    # Starte das Spiel – gamestart erwartet nun ein settings-Dictionary
+    gamestart(settings['species_list'])
+
+
 # Buttons für Neue/Alte Einstellungen
-b1 = tb.Button(button_frame, text="Neue Einstellungen", bootstyle=SUCCESS, command=NewSet)
+b1 = tb.Checkbutton(button_frame, text="Neue Einstellungen", variable=toggle_var, bootstyle="success-outline-toolbutton", command=NewSet)
 b1.pack(side=LEFT, padx=5, pady=10)
 
-b2 = tb.Button(button_frame, text="Alte Einstellungen", bootstyle=(SUCCESS, OUTLINE), command=load_old_settings)
+b2 = tb.Button(button_frame, text="Alte Einstellungen", bootstyle="success", command=load_old_settings)
 b2.pack(side=LEFT, padx=5, pady=10)
+
+b3 = tb.Button(button_frame, text="Shuffle 10 Arten", bootstyle="secondary-outline", command=shuffle_settings)
+b3.pack(side=RIGHT, padx=5, pady=10)
 
 
 # --- Spiel-Fenster mit integriertem Xenocanto-Quiz ---
@@ -868,19 +1048,19 @@ def gamestart(species_list):
         print(f"Fehler beim Laden der CSV: {e}")
         return
 
-    # Baue eine kanonische Artenliste (als englische Version) und eine Mapping-Datenstruktur:
-    # canonical_species: key = englischer Name (in Lowercase), value = Dictionary mit allen Varianten
+    # Baue eine kanonische Artenliste (als wissenschaftliche Version) und eine Mapping-Datenstruktur:
+    # canonical_species: key = wissenschaftlicher Name (in Lowercase), value = Dictionary mit allen Varianten
     # species_options: Liste der kanonischen (wissenschaftlichen) Namen
     canonical_species = {}
     species_options = []
     for art in Artenliste_input:
         mapping = lookup_species(art, species_df)
         if mapping:
-            # Schlüssel kann z. B. der englische Name in Kleinbuchstaben sein:
-            eng = mapping["Wissenschaftlich"].strip()
-            eng_lower = eng.lower()
-            canonical_species[eng_lower] = mapping
-            species_options.append(eng_lower)
+            # Schlüssel kann z.B. der wissenschaftliche Name in Kleinbuchstaben sein:
+            scient = mapping["Wissenschaftlich"].strip()
+            scient_lower = scient.lower()
+            canonical_species[scient_lower] = mapping
+            species_options.append(scient_lower)
         else:
             print(f"Art '{art}' nicht in der CSV gefunden.")
 
@@ -889,12 +1069,12 @@ def gamestart(species_list):
         with open(settings_file, "r") as f:
             settings = json.load(f)
     except Exception:
-        settings = {"spectrogram": 0, "record_type": "Call", "species_list": species_list}
+        settings = {"spectrogram": 1, "image": 1, "species_list": species_list}
 
 
     game_window = Toplevel(root)
     game_window.title("Vogelquiz Spiel")
-    #game_window.geometry("1300x800") #Größe manuell definiert
+    #game_window.geometry("1300x800") #falls man die Größe manuell definieren möchte
     game_window.state("zoomed")
 
     def on_closing():
@@ -916,7 +1096,7 @@ def gamestart(species_list):
 
     # Audio-Frame für Visualisierung/Info vom Audio
     audio_frame = tb.Frame(game_window)
-    audio_frame.pack(pady=40, fill=X, padx=50)
+    audio_frame.pack(pady=10, fill=X, padx=50)
 
     def repeat_current_audio():
         # Stoppe das aktuelle Audio, falls es noch läuft
@@ -961,13 +1141,13 @@ def gamestart(species_list):
 
     # Erstelle einen Media-Frame für Vogelbild und Spektrogramm (nebeneinander)
     media_frame = tb.Frame(game_window)
-    media_frame.pack(pady=10)
+    media_frame.pack(pady=5)
     # Label für das Vogelbild:
     image_label = tb.Label(media_frame)
     image_label.grid(row=0, column=0, padx=10)
     # Label für das Spektrogramm:
     sonogram_label = tb.Label(media_frame)
-    sonogram_label.grid(row=0, column=1, padx=10)
+    sonogram_label.grid(row=0, column=0, padx=10)
 
     # Speichere die Labels als Attribute des Fensters, damit sie in anderen Funktionen zugänglich sind
     game_window.image_label = image_label
@@ -975,11 +1155,76 @@ def gamestart(species_list):
 
     # Frame für Arten-Buttons
     art_frame = tb.Frame(game_window)
-    art_frame.pack(pady=10)
+    art_frame.pack(pady=10, padx=100, fill="both", expand=True)
+    art_frame.grid_columnconfigure(0, weight=1)
+    art_frame.grid_columnconfigure(1, weight=1)
+    art_frame.grid_columnconfigure(2, weight=1)
+    art_frame.grid_columnconfigure(3, weight=1)
+    art_frame.grid_columnconfigure(4, weight=1)
+    art_frame.grid_columnconfigure(5, weight=1)
+    art_frame.grid_columnconfigure(6, weight=1)
+    art_frame.grid_columnconfigure(7, weight=1)
+    art_frame.grid_columnconfigure(8, weight=1)
+    art_frame.grid_columnconfigure(9, weight=1)
+    art_frame.grid_columnconfigure(10, weight=1)
+
 
     feedback_label = tb.Label(game_window, text="", font=("Helvetica", 14))
-    feedback_label.pack(pady=20)
+    feedback_label.pack(pady=10)
 
+    # Funktion zum Verstecken des Copyright-Buttons
+    def hide_copyright_button():
+        if hasattr(media_frame, "copyright_button"):
+            media_frame.copyright_button.grid_remove()
+            print("Copyright-Button wurde versteckt.")
+
+    def update_tooltip_text(widget, new_text):
+        """Aktualisiert den Tooltip-Text eines Widgets ohne es neu zu erstellen."""
+        try:
+            # Setze den neuen Text in der internen Variablen
+            widget.tooltip.text = new_text
+            # Falls das Tooltip-Objekt ein internes Label besitzt, aktualisiere auch dessen Text
+            if hasattr(widget.tooltip, 'label'):
+                widget.tooltip.label.config(text=new_text)
+            widget.tooltip.update_idletasks()
+            print("DEBUG: Tooltip text updated to:", new_text)
+        except Exception as e:
+            print("Error updating tooltip text:", e)
+
+    def create_or_update_copyright_button(parent, image_data):
+        """Erstellt oder aktualisiert den Copyright-Button und passt den Tooltip-Text an."""
+        try:
+            from bs4 import BeautifulSoup  # HTML-Tags entfernen
+
+            # Neue Werte abrufen
+            photo_author = image_data.get("author", "Unbekannter Autor")
+            photo_license = image_data.get("license", "Unbekannte Lizenz")
+            # Entferne HTML-Tags (z. B. <a href=...>)
+            photo_author = BeautifulSoup(photo_author, "html.parser").text
+            tooltip_text = f"Foto von: {photo_author}\nLizenz: {photo_license}"
+            print("DEBUG: Neuer Tooltip-Text:", tooltip_text)
+
+            if hasattr(parent, "copyright_button"):
+                # Aktualisiere den Tooltip-Text ohne den Tooltip neu zu erstellen:
+                update_tooltip_text(parent.copyright_button, tooltip_text)
+                # Stelle sicher, dass der Button sichtbar ist:
+                parent.copyright_button.grid(row=1, column=0, padx=5, pady=2, sticky="w")
+                print("DEBUG: Tooltip aktualisiert.")
+            else:
+                # Neuen Button und Tooltip erstellen
+                parent.copyright_button = tb.Button(parent, text="© Bild", bootstyle="light-link")
+                parent.copyright_button.grid(row=1, column=0, padx=5, pady=2, sticky="w")
+                parent.copyright_button.tooltip = ToolTip(
+                    parent.copyright_button,
+                    text=tooltip_text,
+                    bootstyle=(LIGHT, INVERSE)
+                )
+                print("DEBUG: Neuer Button mit Tooltip erstellt:", tooltip_text)
+
+        except Exception as e:
+            print("Error in updating tooltip:", e)
+
+    #Funktion zum Vergleich, Bild anezeigen und Freischalten von Next-Button nach Auswahl eine Art
     def select_species(selected_key):
         # Stoppe laufende Audio und Progressbar:
         if current_round.get("audio_player"):
@@ -990,14 +1235,16 @@ def gamestart(species_list):
         for btn in species_buttons:
             btn.config(state=DISABLED)
 
+        # Deaktiviere den SKIP Button
+        skip_button.config(state="disabled")
+
         # Aktiviere den NEXT Button
         next_button.config(state="normal")
+
 
         species = current_round["species"]
         if species not in game_window.species_stats:
             game_window.species_stats[species] = {"correct": 0, "wrong": 0}
-
-        # Ersetze + durch Leerzeichen
 
         # Ermittle, in welcher Sprache die korrekte Art angezeigt werden soll.
         # Das wurde in lookup_species unter "display_language" gespeichert.
@@ -1026,22 +1273,33 @@ def gamestart(species_list):
             game_window.falsche_antworten += 1
             game_window.species_stats[species]["wrong"] += 1
 
-        #Spektrogram rauslöschen
-        sonogram_label.config(image="")
+
 
         # Bild anzeigen, falls aktiviert
         if settings.get("image") == 1:
+            sonogram_label.config(image="") # Spektrogram rauslöschen
             try:
                 latin_name = canonical_species[species]["Wissenschaftlich"]
-                image_data = fetch_bird_image_from_commons(latin_name)
-                photo = image_data["photo"]
-                photo_license = image_data["license"]
-                photo_author = image_data["author"]
+                image_data = fetch_bird_image_from_commons(latin_name)  # Holt Bild & Metadaten
+                photo = image_data.get("photo")
+                # Bildinfo aktualisieren
+                create_or_update_copyright_button(media_frame, image_data)
+
                 if photo:
                     game_window.image_label.config(image=photo)
-                    game_window.image_label.image = photo  # keep a reference
+                    game_window.image_label.image = photo  # Referenz speichern
+                    print("Bild wurde erfolgreich gesetzt.")  # Debugging
+
+
+                    # Falls der Button zuvor versteckt war, wieder anzeigen
+                    if hasattr(media_frame, "copyright_button"):
+                        media_frame.copyright_button.grid()
+
                 else:
                     print(f"No Wikimedia image found for '{latin_name}'.")
+                    if hasattr(media_frame, "copyright_button"):
+                        media_frame.copyright_button.grid_remove()  # Button verstecken, falls kein Bild
+
             except Exception as e:
                 print(f"Error fetching Wikimedia image for {species}: {e}")
 
@@ -1053,10 +1311,10 @@ def gamestart(species_list):
     col = 0
 
     display_names = []  # Collect display names
-    for eng in species_options:
+    for scient in species_options:
         # Determine the display language for the species name
-        display_language = canonical_species[eng].get("display_language", "Deutsch")
-        display_name = canonical_species[eng][display_language]
+        display_language = canonical_species[scient].get("display_language", "Deutsch")
+        display_name = canonical_species[scient][display_language]
         display_names.append(display_name)
 
         # Debug output
@@ -1064,13 +1322,13 @@ def gamestart(species_list):
             art_frame,
             text=display_name,
             bootstyle="success-outline-toolbutton",
-            command=lambda current=eng: select_species(current)
+            command=lambda current=scient: select_species(current)
         )
-        btn.grid(row=row, column=col, padx=10, pady=20)
+        btn.grid(row=row, column=col, padx=1, pady=10)
         species_buttons.append(btn)
 
         col += 1
-        if col == 6:
+        if col == 10:
             col = 0
             row += 1
 
@@ -1082,7 +1340,6 @@ def gamestart(species_list):
         columns=display_names
     )
 
-
     # Variable, in der wir Daten der aktuellen Runde speichern
     current_round = {"species": None, "recording": None, "audio_player": None}
     game_window.current_round = current_round  # Speichern im Fenster, damit end_game darauf zugreifen kann
@@ -1092,11 +1349,11 @@ def gamestart(species_list):
         def load_next():
             # Wähle zufällig eine Art aus der kanonischen Liste
             next_species = random.choice(species_options)
-            next_correct_eng =  canonical_species[next_species]["Wissenschaftlich"]
-            print(next_correct_eng)
+            next_correct_scient =  canonical_species[next_species]["Wissenschaftlich"]
+            print(next_correct_scient)
             # Lade das Recording für die nächste Runde
             rec_data = get_random_recording(
-                next_correct_eng,
+                next_correct_scient,
                 settings.get("record_type", "Call"),
                 settings.get("sex_type", ""),
                 settings.get("lifestage_type", "")
@@ -1136,7 +1393,7 @@ def gamestart(species_list):
         # Hier wird die aktuelle Runde synchron mit Spinner geladen
         current_species = random.choice(species_options)
         current_round["species"] = current_species
-        correct_eng = canonical_species[current_species]["Wissenschaftlich"]
+        correct_scient = canonical_species[current_species]["Wissenschaftlich"]
 
         # Spinner (indeterminate Progressbar) einblenden
         # Erstelle den Container im game_window – damit alle Kinder gemeinsam verwaltet werden
@@ -1154,7 +1411,7 @@ def gamestart(species_list):
 
         def load_recording():
             rec_local = get_random_recording(
-                correct_eng,
+                correct_scient,
                 settings.get("record_type", "Call"),
                 settings.get("sex_type", ""),
                 settings.get("lifestage_type", "")
@@ -1181,8 +1438,13 @@ def gamestart(species_list):
 
                 if settings.get("spectrogram") == 1 and recording.get("sonogram_url"):
                     fetch_and_display_sonogram(recording["sonogram_url"], sonogram_label)
+                    blank_button = tb.Button(media_frame, bootstyle="light-link") #Placeholder, damit Button nicht springen
+                    blank_button.grid(row=1, column=0, padx=5, pady=2, sticky="w")
                 else:
                     sonogram_label.config(image="")
+
+                if settings.get("spectrogram") == 0 and settings.get("image") == 0:
+                    show_placeholder(sonogram_label)
 
                 #Aktualisiere den Tooltip mit den kombinierten Infos:
                 info_text = current_round["recording"].get("copyright_info", "Keine Info verfügbar")
@@ -1196,8 +1458,10 @@ def gamestart(species_list):
         # Starte das Prefetching für die nächste Runde
         prefetch_next_round()
 
+
     # --- Angepasste next_round() ---
     def next_round():
+        hide_copyright_button()  # Button ausblenden, bevor das nächste Bild kommt
 
         # Entferne das bisher angezeigte Vogelbild, falls vorhanden:
         game_window.image_label.config(image='')
@@ -1213,6 +1477,9 @@ def gamestart(species_list):
 
         # Deaktiviere den NEXT Button
         next_button.config(state="disabled")
+
+        # Aktiviere den SKIP Button
+        skip_button.config(state="normal")
 
         # Fortschrittsbalken zurücksetzen
         audio_progress.config(value=0)
@@ -1254,6 +1521,9 @@ def gamestart(species_list):
             # Fallback: Falls keine vorgeladene Runde vorliegt, lade synchron
             start_round()
 
+        if settings.get("spectrogram") == 0 and settings.get("image") == 0: #Placeholder einbauen in Media Frame
+            show_placeholder(sonogram_label)
+
         species = current_round["species"]
 
 
@@ -1271,24 +1541,35 @@ def gamestart(species_list):
 
         feedback_label.config(text=f"Übersprungen! Richtig war: {correct_text}")
 
-        # Spektrogram rauslöschen
-        sonogram_label.config(image="")
-
         # Bild anzeigen, falls aktiviert
         if settings.get("image") == 1:
+            sonogram_label.config(image="")  # Spektrogram rauslöschen
             try:
                 latin_name = canonical_species[species]["Wissenschaftlich"]
-                image_data = fetch_bird_image_from_commons(latin_name)
-                photo = image_data["photo"]
-                photo_license = image_data["license"]
-                photo_author = image_data["author"]
+                image_data = fetch_bird_image_from_commons(latin_name)  # Holt Bild & Metadaten
+                photo = image_data.get("photo")
+                # Bildinfo aktualisieren
+                create_or_update_copyright_button(media_frame, image_data)
+
                 if photo:
                     game_window.image_label.config(image=photo)
-                    game_window.image_label.image = photo  # keep a reference
+                    game_window.image_label.image = photo  # Referenz speichern
+                    print("Bild wurde erfolgreich gesetzt.")  # Debugging
+
+                    # Falls der Button zuvor versteckt war, wieder anzeigen
+                    if hasattr(media_frame, "copyright_button"):
+                        media_frame.copyright_button.grid()
+
                 else:
                     print(f"No Wikimedia image found for '{latin_name}'.")
+                    if hasattr(media_frame, "copyright_button"):
+                        media_frame.copyright_button.grid_remove()  # Button verstecken, falls kein Bild
+
             except Exception as e:
                 print(f"Error fetching Wikimedia image for {species}: {e}")
+
+        if settings.get("spectrogram") == 0 and settings.get("image") == 0: #Placeholder einbauen in Media Frame
+            show_placeholder(sonogram_label)
 
         for btn in species_buttons:
             btn.config(state=DISABLED)
@@ -1299,7 +1580,7 @@ def gamestart(species_list):
 
     # Frame für Steuerungs-Buttons (SKIP, NEXT)
     control_frame = tb.Frame(game_window)
-    control_frame.pack(pady=30, fill=X, padx=50)
+    control_frame.pack(pady=10, fill=X, padx=50)
     control_frame.grid_columnconfigure(0, weight=1)
     control_frame.grid_columnconfigure(1, weight=1)
 
@@ -1311,19 +1592,19 @@ def gamestart(species_list):
 
     #Frame für end_back_button
     end_back_frame = tb.Frame(game_window)
-    end_back_frame.pack(pady=30)
+    end_back_frame.pack(pady=20, fill=X, padx=600)
+
 
     # Back to Settings
+    backset_button = tb.Button(end_back_frame, text="Zurück zu Einstellungen", bootstyle="secondary",
+                               command=lambda: back_to_settings(game_window))
+    backset_button.pack(side=LEFT, padx=5, pady=10)
 
     # Der End-Game-Button stoppt zusätzlich das laufende Audio
     endgame_button = tb.Button(end_back_frame, text="Spiel beenden", bootstyle="secondary",
                                command=lambda: end_game(game_window))
-    endgame_button.pack (side=LEFT, padx=5, pady=10)
+    endgame_button.pack (side=RIGHT, padx=5, pady=10)
 
-
-    backset_button = tb.Button(end_back_frame, text="Zurück zu Einstellungen", bootstyle="secondary",
-                               command=lambda: back_to_settings(game_window))
-    backset_button.pack (side=LEFT, padx=5, pady=10)
 
     start_round()
 
@@ -1340,13 +1621,15 @@ def end_game(game_window):
 
     correct_total = game_window.korrekte_antworten
     wrong_total = game_window.falsche_antworten
-    game_window.destroy()
+
+    #Erstelle das Matrix-Bild bevor es geladen wird
+    plot_final_stats_matrix(final_stats_matrix, save_path="matrix_plot.png")
 
     # Neues Fenster für die Gesamtergebnisse
     results_window = tb.Toplevel(root)
     results_window.title("Gesamtergebnisse")
-    #results_window.geometry("1200x800") # Window Größe manuell definiert
     results_window.state("zoomed")
+
 
     header_label = tb.Label(
         results_window,
@@ -1355,11 +1638,11 @@ def end_game(game_window):
     )
     header_label.pack(pady=10)  # Überschrift mit Abstand nach unten
 
-    # Erstelle ein Frame für Label und Meter (damit sie nebeneinander stehen)
+    # Erstelle ein Frame für Gesamt Label und Meter
     total_frame = tb.Frame(results_window)
-    total_frame.pack(pady=20)  # Gesamt-Frame für bessere Anordnung
+    total_frame.pack(pady=20)
 
-    # Gesamtübersicht schriftlich (links im Frame)
+    # Gesamtübersicht schriftlich
     total_score_label = tb.Label(
         total_frame,
         text=(f"Richtige Antworten: {correct_total}\n"
@@ -1367,15 +1650,10 @@ def end_game(game_window):
         font=("Helvetica", 10),
         anchor="w"
     )
-    total_score_label.pack(side="left", padx=20)  # Links platzieren, Abstand nach rechts
+    total_score_label.pack(side="left", padx=20)
 
-    # Gesamtübersicht Meter (rechts im Frame)
     total_attempts_gesamt = correct_total + wrong_total
-
-    if total_attempts_gesamt == 0:
-        percentage_gesamt = 0
-    else:
-        percentage_gesamt = round((correct_total / total_attempts_gesamt) * 100)
+    percentage_gesamt = round((correct_total / total_attempts_gesamt) * 100) if total_attempts_gesamt > 0 else 0
 
     meter_gesamt = tb.Meter(
         total_frame,
@@ -1386,32 +1664,55 @@ def end_game(game_window):
         textright="%",
         subtext="Gesamt Richtig"
     )
-    meter_gesamt.pack(side="right", padx=20)  # Rechts platzieren, Abstand nach links
+    meter_gesamt.pack(side="right", padx=20)
 
-    # Labelframe für die einzelnen Arten
-    species_frame = tb.Labelframe(results_window, text="Ergebnisse pro Art", bootstyle="success")
-    species_frame.pack(fill="both", expand=True, padx=10, pady=10)
+    # **Notebook mit Tabs erstellen**
+    Visualisierung_tabs = tb.Notebook(results_window, bootstyle="dark")
+    Visualisierung_tabs.pack(pady=10, fill="both", expand=True)
 
-    # Zunächst alle Widgets (Statistik-Label und Meter) in eine Liste sammeln
+
+    # **Tab 1: Info Text**
+    tab_info = tb.Frame(Visualisierung_tabs)
+    Visualisierung_tabs.add(tab_info, text="Informationen")
+
+    # Jetzt das Bild in den Tab laden
+    tab_info_label = tb.Label(tab_info, text="Gucke doch mal an, wie gut du warst!")
+    tab_info_label.pack(pady=20)
+
+    # Tab 2: Prozent pro Art
+    tab_prozent = tb.Frame(Visualisierung_tabs)
+    Visualisierung_tabs.add(tab_prozent, text="Prozent pro Art")
+
+    # Erstelle einen Canvas, der als Container für den inneren Frame dient.
+    # Hier gibst du dem Canvas oben und unten etwas mehr Padding, damit der Inhalt nicht direkt am Rand klebt.
+    canvas = tk.Canvas(tab_prozent, borderwidth=0, highlightthickness=0)
+    canvas.pack(fill="both", expand=True, padx=10, pady=(80, 20))
+
+    # Erstelle einen horizontalen Scrollbar mit dunklem Bootstyle (verwende tb.Scrollbar statt tk.Scrollbar)
+    h_scrollbar = tb.Scrollbar(tab_prozent, orient="horizontal", command=canvas.xview, bootstyle="light")
+    h_scrollbar.pack(fill="x", side="bottom")
+    canvas.configure(xscrollcommand=h_scrollbar.set)
+
+    # Erstelle einen inneren Frame, der im Canvas platziert wird.
+    species_frame = tb.Frame(canvas)
+    canvas.create_window((0, 0), window=species_frame, anchor="nw")
+
+    # Aktualisiere die Scrollregion, wenn sich die Größe des species_frame ändert.
+    def on_frame_configure(event):
+        canvas.configure(scrollregion=canvas.bbox("all"))
+
+    species_frame.bind("<Configure>", on_frame_configure)
+
+    # Erstelle die Meter-Widgets in einer einzigen horizontalen Reihe.
     meter_widgets = []
-    # Sortierte Liste aller Arten (damit auch unbeantwortete Arten ein Meter bekommen)
     species_list = sorted(game_window.canonical_species.items(), key=lambda x: x[1]["Deutsch"])
 
     for species_lower, mapping in species_list:
-        # Stats aus species_stats holen oder Default 0
         stats = game_window.species_stats.get(species_lower, {"correct": 0, "wrong": 0})
         total_attempts = stats["correct"] + stats["wrong"]
-
-        # Prozentwert, auf 1 Nachkommastelle gerundet
-        if total_attempts == 0:
-            percentage = 0
-        else:
-            percentage = round((stats["correct"] / total_attempts) * 100)
-
-        # Label zeigt nur "3 korrekt / 10 Audios"
+        percentage = round((stats["correct"] / total_attempts) * 100) if total_attempts > 0 else 0
         label_text = f"{stats['correct']} korrekt / {total_attempts} Audios"
         stats_label = tb.Label(species_frame, text=label_text, font=("Arial", 8))
-        # Erstelle den Meter – dieser zeigt als Subtext den deutschen Namen
         meter = tb.Meter(
             species_frame,
             bootstyle="success",
@@ -1421,38 +1722,70 @@ def end_game(game_window):
             textright="%",
             subtext=mapping["Deutsch"]
         )
-
-
-        # Statt die Widgets direkt zu griden, speichern wir sie in einer Liste
         meter_widgets.append((stats_label, meter))
 
-    # plotte finale Matrix
-    print(plot_final_stats_matrix(final_stats_matrix))
-
-    # Funktion, die die Widgets abhängig von der Breite von species_frame anordnet
-    def arrange_meters(event=None):
-        # Errechne die verfügbare Breite des species_frame
-        frame_width = species_frame.winfo_width()
-        # Schätze eine Mindestbreite pro "Spalte" – Meter (150 Pixel) plus Padding (z.B. 20 Pixel)
-        min_col_width = 150 + 20
-        max_cols = max(1, frame_width // min_col_width)
-
-        # Ordne die Widgets neu an
+    # Platziere alle Meter-Widgets in einer einzigen Zeile:
+    def arrange_meters():
         for i, (s_label, meter) in enumerate(meter_widgets):
-            r = (i // max_cols) * 2
-            c = i % max_cols
-            s_label.grid_configure(row=r, column=c, padx=10, pady=(10, 0), sticky="w")
-            meter.grid_configure(row=r+1, column=c, padx=10, pady=(0, 10))
+            # Mehr Padding oben und unten, damit die Meter etwas mittiger erscheinen.
+            s_label.grid(row=0, column=i, padx=10, pady=(20, 0), sticky="w")
+            meter.grid(row=1, column=i, padx=10, pady=(0, 20), sticky="nsew")
 
-    # Binde das <Configure>-Event, damit bei Größenänderung die Widgets neu angeordnet werden
-    species_frame.bind("<Configure>", arrange_meters)
-    # Rufe arrange_meters einmal direkt auf, um die erste Anordnung zu setzen
     arrange_meters()
 
-    # Schließen-Button
-    close_button = tb.Button(results_window, text="Fenster schließen", command=results_window.destroy, bootstyle = "info")
+    # **Tab 3: Confusion-Matrix**
+    tab_matrix = tb.Frame(Visualisierung_tabs)
+    Visualisierung_tabs.add(tab_matrix, text="Confusion-Matrix")
+
+    # Erstelle einen übergeordneten Layout-Frame in tab_matrix, der den gesamten Platz füllt
+    layout_frame = tb.Frame(tab_matrix)
+    layout_frame.pack(fill="both", expand=True, padx=10, pady=10)
+
+    # Konfiguriere 2 Spalten und 1 Zeile; die Zeile soll sich vertikal ausdehnen
+    layout_frame.columnconfigure(0, weight=1)
+    layout_frame.columnconfigure(1, weight=1)
+    layout_frame.rowconfigure(0, weight=1)
+
+    # --------------------------
+    # Links: Matrix-Bild-Container
+    # --------------------------
+    img_container = tb.Frame(layout_frame)
+    img_container.grid(row=0, column=0, sticky="nsew", padx=(100, 5), pady=5)
+    img_container.columnconfigure(0, weight=1)
+    img_container.rowconfigure(0, weight=1)
+    # Lade das Matrix-Bild in diesen Container
+    load_matrix_image(img_container)
+
+    # --------------------------
+    # Rechts: Container für Beschreibungstext und Vollbild-Button
+    # --------------------------
+    right_container = tb.Frame(layout_frame)
+    right_container.grid(row=0, column=1, sticky="nsew", padx=5, pady=5)
+    right_container.columnconfigure(0, weight=1)
+    # Die erste Zeile (Beschreibung) soll den verfügbaren Platz einnehmen:
+    right_container.rowconfigure(0, weight=1)
+    # Die zweite Zeile (Button) soll nicht expandieren:
+    right_container.rowconfigure(1, weight=0)
+
+    # Beschreibungstext im oberen Bereich
+    desc_container = tb.Frame(right_container)
+    desc_container.grid(row=0, column=0, sticky="nsew", padx=(5, 15), pady=5)
+    desc_label = tb.Label(desc_container, text="Hier steht der Beschreibungstext für die Matrix", anchor="center")
+    desc_label.pack(fill="both", expand=True)
+
+    # Vollbild-Button im unteren Bereich
+    btn_container = tb.Frame(right_container)
+    btn_container.grid(row=1, column=0, sticky="nsew", padx=(5, 15), pady=5)
+    full_button = tb.Button(btn_container, text="Vollbild", bootstyle="success",
+                            command=lambda: open_fullscreen_image(Image.open("matrix_plot.png")))
+    full_button.pack()
+
+    # **Schließen-Button**
+    close_button = tb.Button(results_window, text="Fenster schließen", command=results_window.destroy, bootstyle="success")
     close_button.pack(pady=20, anchor="center")
 
+    # Game_Window automatisch schließen
+    game_window.destroy()
 
 
 
