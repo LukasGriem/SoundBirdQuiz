@@ -392,7 +392,7 @@ class AnimatedGIF(tk.Label):
         super().__init__(master, **kwargs)
         self.gif = Image.open(gif_path)
 
-        scale = 2.0 # Speichert den Skalierungsfaktor
+        scale = 1.0 # Speichert den Skalierungsfaktor (Vergrößerung des GIFs möglich)
         # Neue Größe berechnen
         original_width, original_height = self.gif.size
         new_size = (int(original_width * scale), int(original_height * scale))
@@ -592,11 +592,11 @@ logo_label.image = logo_img  # Referenz sichern
 logo_label.pack(side="top", anchor="center", pady=(0,5))
 
 # Überschrift auf zwei Zeilen (mittig zentriert)
-header_text = "Willkommen zum Vogelquiz!"
-header_label = tb.Label(top_frame, text=header_text, font=("Helvetica", 28), justify="center", bootstyle="default")
-header_label.pack(side="top", anchor="center", pady=(0,0))
+header_text = "Herzlich Willkommen!"
+header_label = tb.Label(top_frame, text=header_text, font=("Helvetica", 25), justify="center", bootstyle="default")
+header_label.pack(side="top", anchor="center", pady=(10,0))
 # Subtitle
-my_subtitle = tb.Label(top_frame, text="Teste deine Vogelstimmen-Kenntnisse. Du kannst die Arten auf Deutsch, Englisch oder als wissenschaftlichen Name (mit + getrennt) eingeben.",
+my_subtitle = tb.Label(top_frame, text="Teste und trainiere deine Vogelstimmen-Kenntnisse.",
                        font=("Helvetica", 10))
 my_subtitle.pack(pady=20)
 #Hintergrundinfo
@@ -665,8 +665,8 @@ def NewSet():
 
 
 
-    label_species_list = tb.Label(inner, text="Welche Arten möchtest du üben? (Komma getrennt)",
-                                  font=("Arial", 10))
+    label_species_list = tb.Label(inner, text="Welche Arten möchtest du üben? Gib die Namen ein (Komma getrennt) oder wähle eine Artenliste aus.",
+                                  font=("Helvetica", 10))
     label_species_list.pack(pady=1)
 
     #Artenauswahl
@@ -758,7 +758,7 @@ def NewSet():
         species_list_entry.insert(0, group_species.get(selection, ""))
 
     # Menubutton für die spezifischen Artengruppen- Listen
-    specific_group_list = tb.Menubutton(choose_species_frame, text="Spezifische Artenliste", bootstyle="success-outline")
+    specific_group_list = tb.Menubutton(choose_species_frame, text="Spezifische Artengruppe", bootstyle="success-outline")
     specific_group_list.grid(row=1, column=1, padx=10, pady=10, sticky="nsew")
 
     # Menü mit Radiobuttons erstellen
@@ -876,7 +876,7 @@ def NewSet():
 
     # Radiobuttons für Aufnahmetyp (gemeinsame Variable=record_type)
     # Container-Frame für Radiobuttons und Combobox
-    radio_frame = tb.Labelframe(inner, bootstyle="success",text="Audiotyp wählen")
+    radio_frame = tb.Labelframe(inner, bootstyle="success",text="Soundtyp wählen")
     radio_frame.pack(pady=10, fill=BOTH, expand=YES)
     radio_frame.grid_columnconfigure(0, weight=1)
     radio_frame.grid_columnconfigure(1, weight=1)
@@ -904,7 +904,7 @@ def NewSet():
     song_radio.grid(row=0, column=2, padx=10, pady=10)
 
     other_radio = tb.Radiobutton(radio_frame, bootstyle="success",
-                                 text="Specific Sound-Typ",
+                                 text="Anderer Sound-Typ",
                                  variable=record_type,
                                  value="Other")
     other_radio.grid(row=1, column=0, padx=(55,5), pady=(20,10))
@@ -945,7 +945,7 @@ def NewSet():
 
     sex_stage_var = IntVar()
     sex_stage_check = tb.Checkbutton(radio_frame, bootstyle="success-round-toggle",
-                               text="Specify sex/lifestage", variable=sex_stage_var, onvalue=1, offvalue=0,  command=on_sex_stage_change)
+                               text="Alter & Geschlecht", variable=sex_stage_var, onvalue=1, offvalue=0,  command=on_sex_stage_change)
     sex_stage_check.grid(row=2, column=0, padx=(75,5), pady=30)
 
 
@@ -1044,10 +1044,10 @@ def shuffle_settings():
 b1 = tb.Checkbutton(button_frame, text="Neue Einstellungen", variable=toggle_var, bootstyle="success-outline-toolbutton", command=NewSet)
 b1.pack(side=LEFT, padx=5, pady=10)
 
-b2 = tb.Button(button_frame, text="Alte Einstellungen", bootstyle="success", command=load_old_settings)
+b2 = tb.Button(button_frame, text="Vorherige Einstellungen", bootstyle="success", command=load_old_settings)
 b2.pack(side=LEFT, padx=5, pady=10)
 
-b3 = tb.Button(button_frame, text="Shuffle 10 Arten", bootstyle="secondary-outline", command=shuffle_settings)
+b3 = tb.Button(button_frame, text="10 Zufallsarten", bootstyle="secondary-outline", command=shuffle_settings)
 b3.pack(side=RIGHT, padx=5, pady=10)
 
 
@@ -1100,8 +1100,8 @@ def gamestart(species_list):
     game_window.protocol("WM_DELETE_WINDOW", on_closing)
 
 
-    game_label = tb.Label(game_window, text="Teste dein Wissen", font=("Helvetica", 20))
-    game_label.pack(pady=20)
+    game_label = tb.Label(game_window, text="Welche Art ist das?", font=("Helvetica", 20))
+    game_label.pack(pady=(30,5))
 
     # Punktestand speichern
     game_window.korrekte_antworten = 0
@@ -1214,7 +1214,7 @@ def gamestart(species_list):
             # Neue Werte abrufen
             photo_author = image_data.get("author", "Unbekannter Autor")
             photo_license = image_data.get("license", "Unbekannte Lizenz")
-            # Entferne HTML-Tags (z. B. <a href=...>)
+            # Entferne HTML-Tags (z.B. <a href=...>)
             photo_author = BeautifulSoup(photo_author, "html.parser").text
             tooltip_text = f"Foto von: {photo_author}\nLizenz: {photo_license}"
             print("DEBUG: Neuer Tooltip-Text:", tooltip_text)
@@ -1227,7 +1227,7 @@ def gamestart(species_list):
                 print("DEBUG: Tooltip aktualisiert.")
             else:
                 # Neuen Button und Tooltip erstellen
-                parent.copyright_button = tb.Button(parent, text="© Bild", bootstyle="light-link")
+                parent.copyright_button = tb.Button(parent, text="©Bild", bootstyle="light-link")
                 parent.copyright_button.grid(row=1, column=0, padx=5, pady=2, sticky="w")
                 parent.copyright_button.tooltip = ToolTip(
                     parent.copyright_button,
@@ -1616,7 +1616,7 @@ def gamestart(species_list):
     backset_button.pack(side=LEFT, padx=5, pady=10)
 
     # Der End-Game-Button stoppt zusätzlich das laufende Audio
-    endgame_button = tb.Button(end_back_frame, text="Spiel beenden", bootstyle="secondary",
+    endgame_button = tb.Button(end_back_frame, text="Spiel beenden & Ergebnisse zeigen", bootstyle="secondary",
                                command=lambda: end_game(game_window))
     endgame_button.pack (side=RIGHT, padx=5, pady=10)
 
@@ -1690,9 +1690,63 @@ def end_game(game_window):
     tab_info = tb.Frame(Visualisierung_tabs)
     Visualisierung_tabs.add(tab_info, text="Informationen")
 
-    # Jetzt das Bild in den Tab laden
-    tab_info_label = tb.Label(tab_info, text="Gucke doch mal an, wie gut du warst!")
-    tab_info_label.pack(pady=20)
+    # Erstelle einen übergeordneten Layout-Frame in tab_matrix, der den gesamten Platz füllt
+    layout1_frame = tb.Frame(tab_info)
+    layout1_frame.pack(fill="both", expand=True, padx=10, pady=10)
+
+    # Konfiguriere 2 Spalten und 1 Zeile; die Zeile soll sich vertikal ausdehnen
+    layout1_frame.columnconfigure(0, weight=1)
+    layout1_frame.columnconfigure(1, weight=1)
+    layout1_frame.rowconfigure(0, weight=1)
+
+    # --------------------------
+    # Links:GIF Bild
+    # --------------------------
+    gif_container = tb.Frame(layout1_frame)
+    gif_container.grid(row=0, column=0, sticky="nsew", padx=(100, 5), pady=5)
+    gif_container.columnconfigure(0, weight=1)
+    gif_container.rowconfigure(0, weight=1)
+
+    #Delay festlegen
+    # Definiere minimale und maximale Delay-Werte
+    MIN_DELAY = 20  # Schnellere Animation (höchste Geschwindigkeit)
+    MAX_DELAY = 150  # Langsamere Animation (niedrigste Geschwindigkeit)
+
+    # Berechne den neuen delay basierend auf percentage_gesamt
+    def calculate_delay(percentage):
+        return MAX_DELAY - (percentage / 100) * (MAX_DELAY - MIN_DELAY)
+
+    # Setze den delay-Wert dynamisch
+    delay = int(calculate_delay(percentage_gesamt))
+
+    # Lade das GIF in diesen Container
+    gif_final = AnimatedGIF(gif_container, resource_path("papageintaucher.gif"), delay=delay)
+    gif_final.place(relx=0, rely=0, relwidth=1, relheight=1)
+
+    # --------------------------
+    # Rechts: Container für Beschreibungstext und Vollbild-Button
+    # --------------------------
+    right_info_container = tb.Frame(layout1_frame)
+    right_info_container.grid(row=0, column=1, sticky="nsew", padx=5, pady=5)
+    right_info_container.columnconfigure(0, weight=1)
+    # Die erste Zeile (Beschreibung) soll nicht expandieren
+    right_info_container.rowconfigure(0, weight=0)
+    # Die zweite Zeile (Button) soll nicht expandieren:
+    right_info_container.rowconfigure(1, weight=0)
+
+    # Beschreibungstext im oberen Bereich
+    text_container = tb.Frame(right_info_container)
+    text_container.grid(row=0, column=0, sticky="nsw", padx=(200, 15), pady=(180, 5))
+    text_label = tb.Label(text_container,
+                          text="Die Runde ist beendet! \n \nIn den weiteren Tabs (mittig, links) kannst du deine Ergebnisse etwas genauer betrachten.\nDu kannst auch das Spiel direkt nochmal mit den gleichen Arten starten. ")
+    text_label.pack(fill="both", expand=True)
+
+    # Vollbild-Button im unteren Bereich
+    btn1_container = tb.Frame(right_info_container)
+    btn1_container.grid(row=1, column=0, sticky="nsw", padx=(200, 15), pady=20)
+    repeat_game_button = tb.Button(btn1_container, text="Spiel wiederholen", bootstyle="success",
+                            command=load_old_settings)
+    repeat_game_button.pack()
 
     # Tab 2: Prozent pro Art
     tab_prozent = tb.Frame(Visualisierung_tabs)
@@ -1777,27 +1831,27 @@ def end_game(game_window):
     right_container = tb.Frame(layout_frame)
     right_container.grid(row=0, column=1, sticky="nsew", padx=5, pady=5)
     right_container.columnconfigure(0, weight=1)
-    # Die erste Zeile (Beschreibung) soll den verfügbaren Platz einnehmen:
-    right_container.rowconfigure(0, weight=1)
+    # Die erste Zeile (Beschreibung) soll nicht expandieren
+    right_container.rowconfigure(0, weight=0)
     # Die zweite Zeile (Button) soll nicht expandieren:
     right_container.rowconfigure(1, weight=0)
 
     # Beschreibungstext im oberen Bereich
     desc_container = tb.Frame(right_container)
-    desc_container.grid(row=0, column=0, sticky="nsew", padx=(5, 15), pady=5)
-    desc_label = tb.Label(desc_container, text="Hier steht der Beschreibungstext für die Matrix", anchor="center")
+    desc_container.grid(row=0, column=0, sticky="nsw", padx=(5, 15), pady=(180,5))
+    desc_label = tb.Label(desc_container, text="Hier kannst du sehen, welche Arten du häufig verwechselt hast. \n \nDie Zeilen stellen die korrekten Vogelarten dar, die Spalten deine Vorhersagen.\nArten bei denen nur die diagonale Zelle grün ist, hast du besonders gut erkannt. \nHat eine Art in der Zeile viele oder besonders rote Zellen, hast du sie häufig mit einer anderen Art verwechselt. \nDie von dir fälschlicherweise angenommene Art, kannst du in der Spalte (oben) ablesen.", anchor="center")
     desc_label.pack(fill="both", expand=True)
 
     # Vollbild-Button im unteren Bereich
     btn_container = tb.Frame(right_container)
-    btn_container.grid(row=1, column=0, sticky="nsew", padx=(5, 15), pady=5)
+    btn_container.grid(row=1, column=0, sticky="nw", padx=(5, 15), pady=20)
     full_button = tb.Button(btn_container, text="Vollbild", bootstyle="success",
                             command=lambda: open_fullscreen_image(Image.open("matrix_plot.png")))
     full_button.pack()
 
     # **Schließen-Button**
-    close_button = tb.Button(results_window, text="Fenster schließen", command=results_window.destroy, bootstyle="success")
-    close_button.pack(pady=20, anchor="center")
+    #close_button = tb.Button(results_window, text="Fenster schließen", command=results_window.destroy, bootstyle="success")
+    #close_button.pack(pady=20, anchor="center")
 
     # Game_Window automatisch schließen
     game_window.destroy()
