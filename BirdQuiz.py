@@ -28,6 +28,8 @@ import seaborn as sns
 import matplotlib.pyplot as plt
 from bs4 import BeautifulSoup
 import sys
+import math
+
 
 #Resource_path Code von: https://stackoverflow.com/questions/31836104/pyinstaller-and-onefile-how-to-include-an-image-in-the-exe-file
 def resource_path(relative_path):
@@ -294,7 +296,7 @@ def fetch_bird_image_from_commons(latin_name):
     or returns None if no cached images exist.
     """
 
-    # Read the metadata file
+    # Read the metadata filegame_window.image_label.configure
     print("FETCH RUNS")
     safe_name = latin_name.replace("+", "_").replace(" ", "_").lower()
     cache_dir = os.path.join("bird_cache", safe_name)
@@ -1160,32 +1162,19 @@ def gamestart(species_list):
     # Label für das Vogelbild:
     image_label = tb.Label(media_frame)
     image_label.grid(row=0, column=0, padx=10)
-    # Label für das Spektrogramm:
-    sonogram_label = tb.Label(media_frame)
-    sonogram_label.grid(row=0, column=0, padx=10)
+
 
     # Speichere die Labels als Attribute des Fensters, damit sie in anderen Funktionen zugänglich sind
     game_window.image_label = image_label
-    game_window.sonogram_label = sonogram_label
+
 
     # Frame für Arten-Buttons
     art_frame = tb.Frame(game_window)
-    art_frame.pack(pady=10, padx=100, fill="both", expand=True)
-    art_frame.grid_columnconfigure(0, weight=1)
-    art_frame.grid_columnconfigure(1, weight=1)
-    art_frame.grid_columnconfigure(2, weight=1)
-    art_frame.grid_columnconfigure(3, weight=1)
-    art_frame.grid_columnconfigure(4, weight=1)
-    art_frame.grid_columnconfigure(5, weight=1)
-    art_frame.grid_columnconfigure(6, weight=1)
-    art_frame.grid_columnconfigure(7, weight=1)
-    art_frame.grid_columnconfigure(8, weight=1)
-    art_frame.grid_columnconfigure(9, weight=1)
-    art_frame.grid_columnconfigure(10, weight=1)
+    art_frame.pack(pady=10, padx=100, fill="x")
 
 
     feedback_label = tb.Label(game_window, text="", font=("Helvetica", 14))
-    feedback_label.pack(pady=10)
+    feedback_label.pack(pady=20)
 
     # Funktion zum Verstecken des Copyright-Buttons
     def hide_copyright_button():
@@ -1227,7 +1216,7 @@ def gamestart(species_list):
                 print("DEBUG: Tooltip aktualisiert.")
             else:
                 # Neuen Button und Tooltip erstellen
-                parent.copyright_button = tb.Button(parent, text="©Bild", bootstyle="light-link")
+                parent.copyright_button = tb.Button(parent, text=" ©Bild", bootstyle="light-link")
                 parent.copyright_button.grid(row=1, column=0, padx=5, pady=2, sticky="w")
                 parent.copyright_button.tooltip = ToolTip(
                     parent.copyright_button,
@@ -1289,10 +1278,9 @@ def gamestart(species_list):
             game_window.species_stats[species]["wrong"] += 1
 
 
-
         # Bild anzeigen, falls aktiviert
         if settings.get("image") == 1:
-            sonogram_label.config(image="") # Spektrogram rauslöschen
+            image_label.config(image="") # Spektrogram rauslöschen
             try:
                 latin_name = canonical_species[species]["Wissenschaftlich"]
                 image_data = fetch_bird_image_from_commons(latin_name)  # Holt Bild & Metadaten
@@ -1303,7 +1291,6 @@ def gamestart(species_list):
                 if photo:
                     game_window.image_label.config(image=photo)
                     game_window.image_label.image = photo  # Referenz speichern
-                    print("Bild wurde erfolgreich gesetzt.")  # Debugging
 
 
                     # Falls der Button zuvor versteckt war, wieder anzeigen
@@ -1311,44 +1298,53 @@ def gamestart(species_list):
                         media_frame.copyright_button.grid()
 
                 else:
-                    print(f"No Wikimedia image found for '{latin_name}'.")
+                    print(f"No Image found for '{latin_name}'.")
                     if hasattr(media_frame, "copyright_button"):
                         media_frame.copyright_button.grid_remove()  # Button verstecken, falls kein Bild
 
             except Exception as e:
-                print(f"Error fetching Wikimedia image for {species}: {e}")
+                print(f"Error fetching Image for {species}: {e}")
 
+    max_columns = 10  # Maximale Anzahl Spalten pro Zeile
+    # Alle Spalten im art_frame gleichmäßig konfigurieren
+    for i in range(max_columns):
+        art_frame.grid_columnconfigure(i, weight=1)
 
-
-    # Erstelle für jede Art einen Button – als Anzeige nutzen wir sie Sprache des Species_list
     species_buttons = []
+    display_names = []
+
+    total_species = len(species_options)
+    current_species_index = 0
     row = 0
-    col = 0
 
-    display_names = []  # Collect display names
-    for scient in species_options:
-        # Determine the display language for the species name
-        display_language = canonical_species[scient].get("display_language", "Deutsch")
-        display_name = canonical_species[scient][display_language]
-        display_names.append(display_name)
+    while current_species_index < total_species:
+        remaining = total_species - current_species_index
+        buttons_in_this_row = min(max_columns, remaining)
+        # Berechne den Offset: math.ceil sorgt für einen größeren linken Abstand,
+        # wenn die Differenz ungerade ist.
+        offset = math.ceil((max_columns - buttons_in_this_row) / 2)
 
-        # Debug output
-        btn = tb.Button(
-            art_frame,
-            text=display_name,
-            bootstyle="success-outline-toolbutton",
-            command=lambda current=scient: select_species(current)
-        )
-        btn.grid(row=row, column=col, padx=1, pady=10)
-        species_buttons.append(btn)
+        for i in range(buttons_in_this_row):
+            scient = species_options[current_species_index]
+            display_language = canonical_species[scient].get("display_language", "Deutsch")
+            display_name = canonical_species[scient][display_language]
+            display_names.append(display_name)
 
-        col += 1
-        if col == 10:
-            col = 0
-            row += 1
+            btn = tb.Button(
+                art_frame,
+                text=display_name,
+                bootstyle="success-outline-toolbutton",
+                command=lambda current=scient: select_species(current)
+            )
+            btn.grid(row=row, column=i + offset, padx=5, pady=10)
+            species_buttons.append(btn)
+            current_species_index += 1
 
-    # Create and store the matrix globally as a Pandas DataFrame with labeled rows and columns
-    global final_stats_matrix  # Ensure we refer to the global variable
+        row += 1
+
+
+    # Erstelle und speichere die Matrix global als Pandas DataFrame
+    global final_stats_matrix
     final_stats_matrix = pd.DataFrame(
         np.zeros((len(display_names), len(display_names))),
         index=display_names,
@@ -1452,14 +1448,14 @@ def gamestart(species_list):
 
 
                 if settings.get("spectrogram") == 1 and recording.get("sonogram_url"):
-                    fetch_and_display_sonogram(recording["sonogram_url"], sonogram_label)
+                    fetch_and_display_sonogram(recording["sonogram_url"], image_label)
                     blank_button = tb.Button(media_frame, bootstyle="light-link") #Placeholder, damit Button nicht springen
                     blank_button.grid(row=1, column=0, padx=5, pady=2, sticky="w")
                 else:
-                    sonogram_label.config(image="")
+                    image_label.config(image="")
 
                 if settings.get("spectrogram") == 0 and settings.get("image") == 0:
-                    show_placeholder(sonogram_label)
+                    show_placeholder(image_label)
 
                 #Aktualisiere den Tooltip mit den kombinierten Infos:
                 info_text = current_round["recording"].get("copyright_info", "Keine Info verfügbar")
@@ -1484,7 +1480,7 @@ def gamestart(species_list):
 
         for btn in species_buttons:
             btn.config(state=NORMAL)
-        sonogram_label.config(image="")
+        image_label.config(image="")
 
         # Stoppe das aktuelle Audio, falls es noch läuft
         if current_round.get("audio_player"):
@@ -1522,9 +1518,9 @@ def gamestart(species_list):
 
 
             if settings.get("spectrogram") == 1 and rec.get("sonogram_url"):
-                fetch_and_display_sonogram(rec["sonogram_url"], sonogram_label)
+                fetch_and_display_sonogram(rec["sonogram_url"], image_label)
             else:
-                sonogram_label.config(image="")
+                image_label.config(image="")
             # Leere die prefetched_round und lade die nächste Runde vor
             game_window.prefetched_round = None
             prefetch_next_round()
@@ -1537,7 +1533,7 @@ def gamestart(species_list):
             start_round()
 
         if settings.get("spectrogram") == 0 and settings.get("image") == 0: #Placeholder einbauen in Media Frame
-            show_placeholder(sonogram_label)
+            show_placeholder(image_label)
 
         species = current_round["species"]
 
@@ -1558,7 +1554,7 @@ def gamestart(species_list):
 
         # Bild anzeigen, falls aktiviert
         if settings.get("image") == 1:
-            sonogram_label.config(image="")  # Spektrogram rauslöschen
+            image_label.config(image="")  # Spektrogram rauslöschen
             try:
                 latin_name = canonical_species[species]["Wissenschaftlich"]
                 image_data = fetch_bird_image_from_commons(latin_name)  # Holt Bild & Metadaten
@@ -1584,7 +1580,7 @@ def gamestart(species_list):
                 print(f"Error fetching Wikimedia image for {species}: {e}")
 
         if settings.get("spectrogram") == 0 and settings.get("image") == 0: #Placeholder einbauen in Media Frame
-            show_placeholder(sonogram_label)
+            show_placeholder(image_label)
 
         for btn in species_buttons:
             btn.config(state=DISABLED)
@@ -1607,18 +1603,18 @@ def gamestart(species_list):
 
     #Frame für end_back_button
     end_back_frame = tb.Frame(game_window)
-    end_back_frame.pack(pady=20, fill=X, padx=600)
-
+    end_back_frame.pack(pady=20, fill=X, padx=50)
 
     # Back to Settings
     backset_button = tb.Button(end_back_frame, text="Zurück zu Einstellungen", bootstyle="secondary",
                                command=lambda: back_to_settings(game_window))
-    backset_button.pack(side=LEFT, padx=5, pady=10)
+    backset_button.pack(side=LEFT, padx=10, pady=10)
+
 
     # Der End-Game-Button stoppt zusätzlich das laufende Audio
     endgame_button = tb.Button(end_back_frame, text="Spiel beenden & Ergebnisse zeigen", bootstyle="secondary",
                                command=lambda: end_game(game_window))
-    endgame_button.pack (side=RIGHT, padx=5, pady=10)
+    endgame_button.pack (side=RIGHT, padx=10, pady=10)
 
 
     start_round()
@@ -1702,7 +1698,7 @@ def end_game(game_window):
     # --------------------------
     # Links:GIF Bild
     # --------------------------
-    gif_container = tb.Frame(layout1_frame)
+    gif_container = tb.Frame(layout1_frame, width=300, height=200)
     gif_container.grid(row=0, column=0, sticky="nsew", padx=(100, 5), pady=5)
     gif_container.columnconfigure(0, weight=1)
     gif_container.rowconfigure(0, weight=1)
@@ -1755,7 +1751,7 @@ def end_game(game_window):
     # Erstelle einen Canvas, der als Container für den inneren Frame dient.
     # Hier gibst du dem Canvas oben und unten etwas mehr Padding, damit der Inhalt nicht direkt am Rand klebt.
     canvas = tk.Canvas(tab_prozent, borderwidth=0, highlightthickness=0)
-    canvas.pack(fill="both", expand=True, padx=10, pady=(80, 20))
+    canvas.pack(fill="both", expand=True, padx=10, pady=(80, 10))
 
     # Erstelle einen horizontalen Scrollbar mit dunklem Bootstyle (verwende tb.Scrollbar statt tk.Scrollbar)
     h_scrollbar = tb.Scrollbar(tab_prozent, orient="horizontal", command=canvas.xview, bootstyle="light")
@@ -1796,8 +1792,7 @@ def end_game(game_window):
     # Platziere alle Meter-Widgets in einer einzigen Zeile:
     def arrange_meters():
         for i, (s_label, meter) in enumerate(meter_widgets):
-            # Mehr Padding oben und unten, damit die Meter etwas mittiger erscheinen.
-            s_label.grid(row=0, column=i, padx=10, pady=(20, 0), sticky="w")
+            s_label.grid(row=0, column=i, padx=10, pady=(80, 0))
             meter.grid(row=1, column=i, padx=10, pady=(0, 20), sticky="nsew")
 
     arrange_meters()
