@@ -3,6 +3,8 @@ from ttkbootstrap.constants import *
 from tkinter import *
 from ttkbootstrap.tooltip import ToolTip
 from ttkbootstrap.scrolled import ScrolledFrame
+from ttkbootstrap.tableview import Tableview
+from ttkbootstrap.constants import *
 import tkinter as tk
 from tkinter import Frame
 from tkinter import Canvas, Scrollbar
@@ -382,7 +384,7 @@ def fetch_and_display_sonogram(sonogram_url, label):
 
 def show_placeholder(label):
     # Erzeuge ein Placeholder-Bild von 400x300-Bild
-    placeholder_img = Image.new("RGB", (300, 200), color="#2B3E50")
+    placeholder_img = Image.new("RGB", (400, 300), color="#2B3E50")
     placeholder_photo = ImageTk.PhotoImage(placeholder_img)
     label.config(image=placeholder_photo)
     label.image = placeholder_photo
@@ -617,6 +619,9 @@ toggle_var = tk.BooleanVar(value=False)
 # Dateiname für das Speichern der Einstellungen
 settings_file = "settings.json"
 
+# Lade die CSV mit den Artennamen (Spalten: Deutsch, Wissenschaftlich, Englisch)
+species_df = pd.read_csv(resource_path("Europ_Species_3.csv"))
+
 
 # Funktion zum Speichern der neuen Einstellungen
 def save_new_settings(species_list, var_spectro, var_image, record_type, sex_type, lifestage_type):
@@ -642,6 +647,47 @@ def save_new_settings(species_list, var_spectro, var_image, record_type, sex_typ
     gamestart(species_list)
 
 
+def present_specieslist():
+    table_window = Toplevel(root)
+    table_window.title("Mögliche Arten")
+    table_width = 1300
+    table_height = 800
+    screen_width = root.winfo_screenwidth()
+    screen_height = root.winfo_screenheight()
+    x = (screen_width /2) - (table_width /2)
+    y = (screen_height /2) - (table_height /2)
+    table_window.geometry(f'{table_width}x{table_height}+{int(x)}+{int(y)}')
+
+    # Sortiere die Daten alphabetisch nach der "Deutsch"-Spalte
+    df = species_df.sort_values(by="Deutsch")
+
+    # Entferne die "ID"-Spalte aus dem DataFrame
+    df = df.drop(columns=["ID"], errors="ignore")
+
+    # Neue Spalten-Definition (ohne "ID")
+    coldata = [
+        {"text": "Deutsch", "stretch": True},
+        {"text": "Wissenschaftlich", "stretch": True},
+        {"text": "Englisch", "stretch": True}
+    ]
+
+    # Zeilendaten extrahieren (ohne "ID")
+    rowdata = [tuple(row) for _, row in df.iterrows()]
+
+    # Tableview erstellen
+    dt = Tableview(
+        master=table_window,
+        coldata=coldata,
+        rowdata=rowdata,
+        paginated=TRUE,
+        pagesize=24,
+        searchable=True,
+        bootstyle=PRIMARY,
+        stripecolor=(tb.Style().colors.dark, None),
+        autofit=True  # Füllt den gesamten Platz aus
+    )
+    dt.pack(fill="both", expand=True, padx=10, pady=10)
+
 # Funktion für den Button "Neue Einstellungen"
 def NewSet():
     global settings_frame
@@ -665,11 +711,31 @@ def NewSet():
             settings_frame.destroy()
             settings_frame = None
 
+    # Erstelle einen Container-Frame für den gesamten Satz
+    sentence_frame = tb.Frame(inner)
+    sentence_frame.pack(pady=1)
 
+    # Erster Teil des Textes
+    label_part1 = tb.Label(sentence_frame,
+                           text="Welche Arten möchtest du üben? Gib die Namen ein (Komma getrennt) oder wähle eine ",
+                           font=("Helvetica", 10))
+    label_part1.pack(side="left")
 
-    label_species_list = tb.Label(inner, text="Welche Arten möchtest du üben? Gib die Namen ein (Komma getrennt) oder wähle eine Artenliste aus.",
-                                  font=("Helvetica", 10))
-    label_species_list.pack(pady=1)
+    # Das klickbare Label für "Artenliste"
+    label_link = tb.Label(sentence_frame,
+                          text="Artenliste",
+                          font=("Helvetica", 10, "underline", "italic"),
+                          foreground="white", cursor="hand2")
+    label_link.pack(side="left")
+
+    # Den restlichen Text
+    label_part2 = tb.Label(sentence_frame,
+                           text=" aus.",
+                           font=("Helvetica", 10))
+    label_part2.pack(side="left")
+
+    # Binde das Klick-Ereignis an die Funktion present_specieslist()
+    label_link.bind("<Button-1>", lambda event: present_specieslist())
 
     #Artenauswahl
     choose_species_frame = tb.Frame(inner)
@@ -698,7 +764,7 @@ def NewSet():
             "Siedlung": "Haussperling, Hausrotschwanz, Blaumeise, Bachstelze, Kohlmeise, Amsel, Feldsperling, Grünfink, Star, Buchfink, Elster",
             "Auenwald": "Pirol, Nachtigall, Kleinspecht, Mittelspecht, Trauerschnäpper, Kohlmeise, Blaumeise, Kleiber, Schwarzspecht, Buchfink",
             "Feuchtgebiet Binnenland": "Bartmeise, Sumpfrohrsänger, Schilfrohrsänger, Eisvogel, Rohrammer, Teichrohrsänger, Zwergtaucher, Waldwasserläufer, Kiebitz",
-            "Alpine Zone": "Alpendohle, Mauerläufer, Bergpieper, Birkenzeisig, Hausrotschwanz, Alpenbraunelle",
+            "Alpine Zone": "Alpendohle, Mauerläufer, Bergpieper, Taigabirkenzeisig, Hausrotschwanz, Alpenbraunelle",
             "Küste (typische Arten)": "Austernfischer, Silbermöwe, Sandregenpfeifer, Brandgans, Lachmöwe, Alpenstrandläufer, Rotschenkel, Eiderente"
         }
 
@@ -832,7 +898,7 @@ def NewSet():
         ### **3. Falls "Other" gewählt wurde, überprüfe die Combobox**
         if selection in combobox_mapping:
             custom_record_type.set(combobox_mapping[selection])  # Setze Combobox-Wert
-            other_combobox.pack(side=LEFT, padx=10)  # Zeige die Combobox an
+            record_type.set("Other") #Radiobutton wird ausgewählt und Combobox automatisch mit angezeigt
         else:
             custom_record_type.set("Bitte auswählen")  # Standardwert setzen
             other_combobox.pack_forget()  # Combobox verstecken
@@ -880,9 +946,9 @@ def NewSet():
     # Container-Frame für Radiobuttons und Combobox
     radio_frame = tb.Labelframe(inner, bootstyle="success",text="Soundtyp wählen")
     radio_frame.pack(pady=10, fill=BOTH, expand=YES)
-    radio_frame.grid_columnconfigure(0, weight=1)
-    radio_frame.grid_columnconfigure(1, weight=1)
-    radio_frame.grid_columnconfigure(2, weight=1)
+    radio_frame.grid_columnconfigure(0, weight=1, uniform="col")
+    radio_frame.grid_columnconfigure(1, weight=1, uniform="col")
+    radio_frame.grid_columnconfigure(2, weight=1, uniform="col")
 
     record_type = StringVar(value="All_type")  # Standard: Alle
 
@@ -909,7 +975,7 @@ def NewSet():
                                  text="Anderer Sound-Typ",
                                  variable=record_type,
                                  value="Other")
-    other_radio.grid(row=1, column=0, padx=(55,5), pady=(20,10))
+    other_radio.grid(row=1, column=0, padx=(75,5), pady=(25,15))
 
     # Combobox – zunächst ausgeblendet
     custom_record_type = StringVar(value="")  # Diese Variable speichert den benutzerdefinierten Wert
@@ -948,7 +1014,7 @@ def NewSet():
     sex_stage_var = IntVar()
     sex_stage_check = tb.Checkbutton(radio_frame, bootstyle="success-round-toggle",
                                text="Alter & Geschlecht", variable=sex_stage_var, onvalue=1, offvalue=0,  command=on_sex_stage_change)
-    sex_stage_check.grid(row=2, column=0, padx=(75,5), pady=30)
+    sex_stage_check.grid(row=2, column=0, padx=(65,5), pady=30)
 
 
     #Combobutton für Geschlecht und Lifestage
@@ -985,6 +1051,8 @@ def NewSet():
         species_list = species_list_entry.get()
         save_new_settings(species_list, var_spectro, var_image, record_type,sex_type, lifestage_type)
         settings_frame.pack_forget()  # Formular ausblenden
+
+
 
 
     save_button = tb.Button(settings_frame, text="Einstellungen speichern und Spiel starten", bootstyle="success",
@@ -1046,10 +1114,10 @@ def shuffle_settings():
 b1 = tb.Checkbutton(button_frame, text="Neue Einstellungen", variable=toggle_var, bootstyle="success-outline-toolbutton", command=NewSet)
 b1.pack(side=LEFT, padx=5, pady=10)
 
-b2 = tb.Button(button_frame, text="Vorherige Einstellungen", bootstyle="success", command=load_old_settings)
+b2 = tb.Button(button_frame, text="Vorherige Einstellungen", bootstyle="success-outline", command=load_old_settings)
 b2.pack(side=LEFT, padx=5, pady=10)
 
-b3 = tb.Button(button_frame, text="10 Zufallsarten", bootstyle="secondary-outline", command=shuffle_settings)
+b3 = tb.Button(button_frame, text="10 Zufallsarten", bootstyle="success-outline", command=shuffle_settings)
 b3.pack(side=RIGHT, padx=5, pady=10)
 
 
@@ -1058,12 +1126,6 @@ def gamestart(species_list):
     # Die vom Nutzer eingegebene Liste (Komma-getrennt) – Elemente können in Deutsch, Wissenschaftlich oder Englisch sein
     Artenliste_input = [art.strip() for art in species_list.split(",") if art.strip()]
 
-    # Lade die CSV mit den Artennamen (Spalten: Deutsch, Wissenschaftlich, Englisch)
-    try:
-        species_df = pd.read_csv(resource_path("Europ_Species_3.csv"))
-    except Exception as e:
-        print(f"Fehler beim Laden der CSV: {e}")
-        return
 
     # Baue eine kanonische Artenliste (als wissenschaftliche Version) und eine Mapping-Datenstruktur:
     # canonical_species: key = wissenschaftlicher Name (in Lowercase), value = Dictionary mit allen Varianten
@@ -1216,7 +1278,7 @@ def gamestart(species_list):
                 print("DEBUG: Tooltip aktualisiert.")
             else:
                 # Neuen Button und Tooltip erstellen
-                parent.copyright_button = tb.Button(parent, text=" ©Bild", bootstyle="light-link")
+                parent.copyright_button = tb.Button(parent, text="©Bild", bootstyle="light-link")
                 parent.copyright_button.grid(row=1, column=0, padx=5, pady=2, sticky="w")
                 parent.copyright_button.tooltip = ToolTip(
                     parent.copyright_button,
@@ -1305,23 +1367,62 @@ def gamestart(species_list):
             except Exception as e:
                 print(f"Error fetching Image for {species}: {e}")
 
-    max_columns = 10  # Maximale Anzahl Spalten pro Zeile
-    # Alle Spalten im art_frame gleichmäßig konfigurieren
+    max_columns = 10
+    total_species = len(species_options)
+    total_rows = math.ceil(total_species / max_columns)
+
+    # Lege eine Zeilenhöhe fest – diesen Wert musst du eventuell anpassen,
+    # sodass er der tatsächlichen Höhe einer Button-Zeile (inklusive Padding) entspricht.
+    row_height = 60
+
+    # Wenn mehr als 3 Zeilen benötigt werden, fixiere die Höhe auf 3 Zeilen und zeige die Scrollbar.
+    if total_rows > 3:
+        canvas_height = 3 * row_height
+        show_scrollbar = True
+    else:
+        canvas_height = total_rows * row_height
+        show_scrollbar = False
+
+    # Erstelle ein Canvas innerhalb des art_frame, das den scrollbaren Bereich darstellt.
+    canvas = tk.Canvas(art_frame, height=canvas_height, borderwidth=0, highlightthickness=0)
+    canvas.pack(side="left", fill="x", expand=True)
+
+    if show_scrollbar:
+        # Füge eine vertikale Scrollbar hinzu, die den Canvas steuert.
+        v_scrollbar = tb.Scrollbar(art_frame, orient="vertical", command=canvas.yview)
+        v_scrollbar.pack(side="right", fill="y")
+        canvas.configure(yscrollcommand=v_scrollbar.set)
+
+    # Erstelle einen inneren Frame (species_frame) im Canvas, in dem die Artenbuttons per Grid angeordnet werden.
+    species_frame = tb.Frame(canvas)
+    # Füge species_frame in den Canvas ein.
+    window = canvas.create_window((0, 0), window=species_frame, anchor="nw")
+
+    # Stelle sicher, dass sich species_frame in der Breite anpasst:
+    def on_canvas_configure(event):
+        canvas.itemconfig(window, width=event.width)
+
+    canvas.bind("<Configure>", on_canvas_configure)
+
+    # Aktualisiere die Scrollregion, wenn sich species_frame ändert.
+    def on_species_frame_configure(event):
+        canvas.configure(scrollregion=canvas.bbox("all"))
+
+    species_frame.bind("<Configure>", on_species_frame_configure)
+
+    # Konfiguriere im species_frame alle 10 Spalten gleichmäßig.
     for i in range(max_columns):
-        art_frame.grid_columnconfigure(i, weight=1)
+        species_frame.grid_columnconfigure(i, weight=1)
 
     species_buttons = []
     display_names = []
-
-    total_species = len(species_options)
     current_species_index = 0
     row = 0
 
     while current_species_index < total_species:
         remaining = total_species - current_species_index
         buttons_in_this_row = min(max_columns, remaining)
-        # Berechne den Offset: math.ceil sorgt für einen größeren linken Abstand,
-        # wenn die Differenz ungerade ist.
+        # Berechne einen Offset, damit die Buttons in der Zeile zentriert angeordnet sind.
         offset = math.ceil((max_columns - buttons_in_this_row) / 2)
 
         for i in range(buttons_in_this_row):
@@ -1331,7 +1432,7 @@ def gamestart(species_list):
             display_names.append(display_name)
 
             btn = tb.Button(
-                art_frame,
+                species_frame,
                 text=display_name,
                 bootstyle="success-outline-toolbutton",
                 command=lambda current=scient: select_species(current)
@@ -1450,12 +1551,17 @@ def gamestart(species_list):
                 if settings.get("spectrogram") == 1 and recording.get("sonogram_url"):
                     fetch_and_display_sonogram(recording["sonogram_url"], image_label)
                     blank_button = tb.Button(media_frame, bootstyle="light-link") #Placeholder, damit Button nicht springen
-                    blank_button.grid(row=1, column=0, padx=5, pady=2, sticky="w")
+                    blank_button.grid(row=1, column=0, padx=5, pady=2, sticky="e")
                 else:
                     image_label.config(image="")
 
                 if settings.get("spectrogram") == 0 and settings.get("image") == 0:
                     show_placeholder(image_label)
+
+                if settings.get("spectrogram") == 0 and settings.get("image") ==1:
+                    show_placeholder(image_label)
+                    blank_button = tb.Button(media_frame, bootstyle="light-link")  # Placeholder, damit Button nicht springen
+                    blank_button.grid(row=1, column=0, padx=5, pady=2, sticky="e")
 
                 #Aktualisiere den Tooltip mit den kombinierten Infos:
                 info_text = current_round["recording"].get("copyright_info", "Keine Info verfügbar")
@@ -1534,6 +1640,11 @@ def gamestart(species_list):
 
         if settings.get("spectrogram") == 0 and settings.get("image") == 0: #Placeholder einbauen in Media Frame
             show_placeholder(image_label)
+        if settings.get("spectrogram") == 0 and settings.get("image") == 1:
+            show_placeholder(image_label)
+            blank_button = tb.Button(media_frame, bootstyle="light-link")  # Placeholder, damit Button nicht springen
+            blank_button.grid(row=1, column=0, padx=5, pady=2, sticky="e")
+
 
         species = current_round["species"]
 
@@ -1581,6 +1692,7 @@ def gamestart(species_list):
 
         if settings.get("spectrogram") == 0 and settings.get("image") == 0: #Placeholder einbauen in Media Frame
             show_placeholder(image_label)
+
 
         for btn in species_buttons:
             btn.config(state=DISABLED)
