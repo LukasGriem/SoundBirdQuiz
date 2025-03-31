@@ -11,7 +11,6 @@ import urllib.request
 import io
 import base64
 from PIL import Image
-import shutil
 import requests
 import http.server
 import socketserver
@@ -23,6 +22,7 @@ import seaborn as sns
 import matplotlib.pyplot as plt
 import numpy as np
 from bs4 import BeautifulSoup  # HTML-Tags entfernen
+import shutil
 
 
 
@@ -68,6 +68,16 @@ def init_db():
 
 # Datenbank beim Start initialisieren
 init_db()
+
+#Funktion zum Löschen der Ergebnisse
+def delete_all_results():
+    db_path = os.path.join(os.getenv("LOCALAPPDATA"), "SoundBirdQuiz", "game_results.db")
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM results")
+    conn.commit()
+    conn.close()
+    print("[INFO] Alle Einträge wurden gelöscht.")
 
 # CSV einmal global laden (z.B. beim Programmstart)
 species_df = pd.read_csv("Europ_Species_3.csv", encoding="utf-8-sig")  # Passe ggf. den Delimiter an
@@ -156,6 +166,8 @@ HEADERS = {
     "User-Agent": "BirdQuizBot/1.0 (Python Script for Bird Sound Quiz)"
 }
 
+
+#Ab hier def nicht mehr in test_df drin!!!
 def cache_bird_images(species_list):
     """
     Lädt und speichert Wikipedia-Bilder für die angegebenen Arten.
@@ -279,6 +291,19 @@ def cache_bird_images(species_list):
             print(f"[OK] Bild und Metadaten für '{species}' in {image_file} gespeichert.")
         except Exception as e:
             print(f"[ERROR] metadata.json für '{species}' schreiben: {e}")
+
+def delete_entire_image_cache():
+    cache_dir = "bird_cache"
+    if os.path.exists(cache_dir):
+        try:
+            shutil.rmtree(cache_dir)
+            print("[INFO] Gesamter Bilder-Cache erfolgreich gelöscht.")
+        except Exception as e:
+            print(f"[ERROR] Fehler beim Löschen des Bild-Caches: {e}")
+    else:
+        print("[INFO] Kein Cache-Ordner vorhanden – nichts zu löschen.")
+
+
 
 def load_bird_image(species: str) -> str:
     """
@@ -441,7 +466,6 @@ def get_top3_text():
 
     return ft.Column(
         controls=[
-            ft.Text("TOP 3 Arten", size=24, weight=ft.FontWeight.BOLD, color="white"),
             ft.Text(f"Die drei am besten erkannten Arten sind: {easiest_text}.", color="white"),
             ft.Text(f"Die drei am schlechtesten erkannten Arten sind: {hardest_text}.", color="white"),
         ]
@@ -462,7 +486,7 @@ class MainMenu(ft.View):
             on_dismiss=lambda e: page.add(ft.Text("Non-modal dialog dismissed")),
         )
 
-        # 🚀 Funktion zum Zufälligen Auswählen von 10 Arten & Speichern in settings.json
+        #  Funktion zum Zufälligen Auswählen von 10 Arten & Speichern in settings.json
         def shuffle_and_start_quiz(e):
             print("[DEBUG] Quiz starten: Wähle 10 zufällige Arten")
 
@@ -713,21 +737,40 @@ class Settings(ft.View):
         self.spectrogram_switch = ft.Switch(label="Spektrogramm anzeigen", value=True)
 
         # "Back to Menu"-Button
-        header_row = ft.Row(
-            alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
-            vertical_alignment=ft.CrossAxisAlignment.CENTER,
-            controls=[
-                ft.OutlinedButton(
-                    text="Back to Menu",
-                    icon=ft.Icons.MENU,
-                    icon_color="white",
-                    style=ft.ButtonStyle(
-                        bgcolor={"": "green_100", ft.ControlState.DISABLED: "grey_100"},
-                        color={"": "white", ft.ControlState.DISABLED: "grey"}
+        top_bar = ft.Container(
+            bgcolor=ft.Colors.GREEN_400,  # Oder z.B. ft.Colors.GREEN_ACCENT_400
+            padding=10,  # Optional etwas Innenabstand
+            content=ft.Row(
+                alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+                vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                controls=[
+                    ft.Container(
+                        expand=1,
+                        alignment=ft.alignment.center_left,
+                        content=ft.OutlinedButton(
+                            text="Back to Menu",
+                            icon=ft.Icons.MENU,
+                            icon_color="white",
+                            style=ft.ButtonStyle(
+                                bgcolor={"": "green_100", ft.ControlState.DISABLED: "grey_100"},
+                                color={"": "white", ft.ControlState.DISABLED: "grey"},
+                                side=ft.BorderSide(1, ft.Colors.WHITE)
+                            ),
+                            on_click=lambda e: page.go("/")
+                        )
                     ),
-                    on_click=lambda e: self.page.go("/")
-                ),
-            ],
+                    ft.Container(
+                        expand=2,
+                        alignment=ft.alignment.center,
+                        content=ft.Text("Neue Einstellungen", size=30, weight=ft.FontWeight.BOLD, color="white")
+                    ),
+                    ft.Container(
+                        expand=1,
+                        alignment=ft.alignment.center_right,
+                        content=ft.Text("")
+                    ),
+                ]
+            )
         )
 
         # Überschrift
@@ -735,10 +778,9 @@ class Settings(ft.View):
             alignment=ft.MainAxisAlignment.CENTER,
             controls=[
                 ft.Text(
-                    "Neue Einstellungen",
-                    style="headlineMedium",
-                    color="white",
-                    weight=ft.FontWeight.BOLD
+                    "Hier kannst du deine Spieleinstellungen festlegen.",
+                    style="bodyMedium",
+                    color="white"
                 ),
             ],
         )
@@ -1087,35 +1129,57 @@ class Settings(ft.View):
         def show_csv_table(e):
             print("[DEBUG] show_csv_table wurde aufgerufen")
 
-            # **Erstelle DataTable erst jetzt**
-            try:
-                columns = [ft.DataColumn(ft.Text(col)) for col in species_df.columns]
+            # 🔹 Lokale Filterfunktion
+            def update_table(search_value):
+                filtered_df = species_df[
+                    species_df.apply(lambda row: search_value.lower() in str(row).lower(), axis=1)
+                ]
+
                 rows = [
                     ft.DataRow(cells=[ft.DataCell(ft.Text(str(cell))) for cell in row])
-                    for row in species_df.values
+                    for row in filtered_df.values
                 ]
-                print(f"[DEBUG] DataTable erstellt mit {len(rows)} Zeilen und {len(columns)} Spalten.")
-                data_table = ft.DataTable(columns=columns, rows=rows)
+                data_table.rows = rows
+                page.update()
 
-            except Exception as err:
-                print("[ERROR] Fehler beim Erstellen der DataTable:", err)
-                data_table = ft.Text("Fehler beim Laden der CSV-Tabelle")
+            # 🔹 Suchfeld mit Callback bei Änderung
+            search_field = ft.TextField(
+                hint_text="Nach Art suchen...",
+                on_change=lambda e: update_table(e.control.value),
+                autofocus=True,
+                width=780
+            )
 
-            # **Dialog mit der DataTable aktualisieren**
-            dlg_modal.title = ft.Text("CSV-Tabelle")
+            # 🔹 Initiale Tabelle
+            columns = [ft.DataColumn(ft.Text(col)) for col in species_df.columns]
+            data_table = ft.DataTable(columns=columns, rows=[
+                ft.DataRow(cells=[ft.DataCell(ft.Text(str(cell))) for cell in row])
+                for row in species_df.values
+            ])
+
+            # 🔹 Neuen Inhalt setzen
+            dlg_modal.title = ft.Text("Mögliche Arten für die Liste")
             dlg_modal.content = ft.Container(
                 width=800,
                 height=500,
                 padding=ft.Padding(20, 20, 20, 20),
                 content=ft.Column(
-                    controls=[data_table],
+                    controls=[
+                        search_field,
+                        ft.Divider(height=10, color="transparent"),
+                        ft.Container(data_table, expand=True, bgcolor=ft.Colors.GREEN_ACCENT_100)
+                    ],
+                    expand=True,
                     scroll="adaptive"
                 )
             )
+            dlg_modal.actions = [
+                ft.TextButton("Schließen", on_click=close_settings_dialog)
+            ]
 
             dlg_modal.open = True
             page.dialog = dlg_modal
-            page.update()  # **Sorgt dafür, dass die UI neu gerendert wird**
+            page.update()
 
         # Erstelle den Settings-Dialog
         dlg_modal = ft.AlertDialog(
@@ -1153,7 +1217,7 @@ class Settings(ft.View):
                         spacing=20,
                         horizontal_alignment=ft.CrossAxisAlignment.CENTER,
                         controls=[
-                            header_row,
+                            top_bar,
                             text_row,
                             settings_container,  # Buttons im Settings-Container bleiben klickbar!
                         ],
@@ -1245,7 +1309,7 @@ class Game(ft.View):
         # UI-Elemente
         # Rundenzähler initialisieren
         self.round = 1
-        self.round_label = ft.Text(f"Runde {self.round}", style="titleMedium", color=ft.Colors.WHITE)
+        self.round_label = ft.Text(f"Runde {self.round}", style="headlineSmall", color=ft.Colors.WHITE)
 
         self.audio_button = ft.OutlinedButton(
             text="Repeat Audio",
@@ -1313,42 +1377,52 @@ class Game(ft.View):
             width=200,
             on_click=self.skip_round
         )
-
-        top_bar = ft.Row(
-            controls=[
-                # Linker Bereich
-                ft.Container(
-                    expand=1,
-                    alignment=ft.alignment.center_left,
-                    content=ft.OutlinedButton(
-                        text="Back to Menu",
-                        icon=ft.Icons.MENU,
-                        icon_color="white",
-                        style=ft.ButtonStyle(
-                            bgcolor={"": "green_100", ft.ControlState.DISABLED: "grey_100"},
-                            color={"": "white", ft.ControlState.DISABLED: "grey"}
-                        ),
-                        on_click=self.backtomenu
-                    )
-                ),
-
-                # Rechter Bereich
-                ft.Container(
-                    expand=1,
-                    alignment=ft.alignment.center_right,
-                    content=ft.OutlinedButton(
-                        text="End Game & Show Results",
-                        icon=ft.Icons.STOP,
-                        icon_color="white",
-                        style=ft.ButtonStyle(
-                            bgcolor={"": "green_100", ft.ControlState.DISABLED: "grey_100"},
-                            color={"": "white", ft.ControlState.DISABLED: "grey"}
-                        ),
-                        on_click=self.check_before_navigate
-                    )
-                ),
-            ],
+        top_bar = ft.Container(
+            bgcolor=ft.Colors.GREEN_700,  # Oder z.B. ft.Colors.GREEN_ACCENT_400
+            padding=10,  # Optional etwas Innenabstand
+            content=ft.Row(
+                alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+                vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                controls=[
+                    ft.Container(
+                        expand=1,
+                        alignment=ft.alignment.center_left,
+                        content=ft.OutlinedButton(
+                            text="Back to Menu",
+                            icon=ft.Icons.MENU,
+                            icon_color="white",
+                            style=ft.ButtonStyle(
+                                bgcolor={"": "green_100", ft.ControlState.DISABLED: "grey_100"},
+                                color={"": "white", ft.ControlState.DISABLED: "grey"},
+                                side=ft.BorderSide(1, ft.Colors.WHITE)
+                            ),
+                            on_click=lambda e: page.go("/")
+                        )
+                    ),
+                    ft.Container(
+                        expand=2,
+                        alignment=ft.alignment.center,
+                        content=ft.Text("Welche Art hörst du?", size=30, weight=ft.FontWeight.BOLD, color="white")
+                    ),
+                    ft.Container(
+                        expand=1,
+                        alignment=ft.alignment.center_right,
+                        content=ft.OutlinedButton(
+                            text="End Game & Show Results",
+                            icon=ft.Icons.REPLAY,
+                            icon_color="white",
+                            style=ft.ButtonStyle(
+                                bgcolor={"": "green_100", ft.ControlState.DISABLED: "grey_100"},
+                                color={"": "white", ft.ControlState.DISABLED: "grey"},
+                                side=ft.BorderSide(1, ft.Colors.WHITE)
+                            ),
+                            on_click=self.check_before_navigate
+                        )
+                    ),
+                ]
+            )
         )
+
 
         # Haupt-Layout
         self.main_content = ft.Column(
@@ -1356,7 +1430,6 @@ class Game(ft.View):
                 horizontal_alignment=ft.CrossAxisAlignment.CENTER,
                 controls=[
                     top_bar,
-                    ft.Text("Welche Art hörst du?", style="headlineLarge", color="white"),
                     self.round_label,
                     self.audio_button,
                     self.media_image,
@@ -1604,7 +1677,8 @@ class Game(ft.View):
 
     def start_new_round(self):
         if not self.selected_species:
-            self.feedback_text.value = "Keine Arten ausgewählt!"
+            self.feedback_text.value = "Hinweis: Keine Arten ausgewählt!"
+            self.feedback_text.color = "red"
             self.page.update()
             return
 
@@ -1817,823 +1891,273 @@ class Results(ft.View):
         self.page = page
         self.bgcolor = ft.Colors.BLUE_GREY_900
 
-        def load_current_round_results():
-            """Lädt nur die Ergebnisse der aktuellen Session."""
-            session_id = self.page.session.get("session_id") or 0   # Aktuelle Session-ID abrufen
-            print(f"[DEBUG] Lade Daten für Session-ID {session_id}")
+        # 🟢 Content-Bereich (rechts)
+        self.content_area = ft.Column(expand=True)
 
-            conn = sqlite3.connect("game_results.db")
-            query = "SELECT correct_species, selected_species, is_correct FROM results WHERE session_id = ?"
-            df = pd.read_sql_query(query, conn, params=(session_id,))
-            conn.close()
-
-            return df  # DataFrame mit nur den aktuellen Session-Daten
-
-        def load_species_accuracy_for_session(page):
-            """Lädt die Korrektheitsquote pro Art aus SQLite, aber nur für die aktuelle Session."""
-            session_id = page.session.get("session_id") or 0  # Aktuelle Session-ID abrufen
-            print(f"[DEBUG] Lade Daten für Session-ID {session_id}")
-
-            conn = sqlite3.connect("game_results.db")
-            cursor = conn.cursor()
-
-            # Korrekte Antworten pro Art in der aktuellen Session abrufen
-            cursor.execute("""
-                SELECT correct_species, 
-                       SUM(is_correct) AS correct_count, 
-                       COUNT(*) AS total_count
-                FROM results
-                WHERE session_id = ?
-                GROUP BY correct_species
-            """, (session_id,))
-
-            data = cursor.fetchall()
-            conn.close()
-
-            # Erzeuge ein Dictionary mit den Prozentsätzen
-            species_accuracy = {}
-            for species, correct_count, total_count in data:
-                accuracy = (correct_count / total_count) * 100 if total_count > 0 else 0
-
-                # **🔹 Hier nutzen wir die bestehende Übersetzungsfunktion `lookup_species`**
-                translated_species = lookup_species(species, species_df)
-                if translated_species:
-                    display_name = translated_species["Deutsch"]  # Oder eine andere Sprache, falls gewünscht
-                else:
-                    display_name = species  # Falls keine Übersetzung gefunden wird
-
-                species_accuracy[display_name] = {"accuracy": accuracy, "total_count": total_count}
-
-            return species_accuracy
-
-        def get_species_for_current_session():
-            """Lädt alle Arten der aktuellen Runde aus settings.json."""
-            with open("settings.json", "r") as f:
-                settings_data = json.load(f)
-
-            return settings_data.get("species_list", "").split(", ")
-
-
-
-        # 🔹 Lade die aktuellen Session-Daten nur einmal
-        df = load_current_round_results()
-
-        if df.empty:
-            print("[WARN] Keine Daten für diese Runde vorhanden!")
-        else:
-            # 🔹 Übersetze alle Artnamen
-            df["correct_species"] = df["correct_species"].apply(
-                lambda x: lookup_species(x, species_df)["Deutsch"] if lookup_species(x, species_df) else x)
-            df["selected_species"] = df["selected_species"].apply(
-                lambda x: lookup_species(x, species_df)["Deutsch"] if lookup_species(x, species_df) else x)
-
-            print("[DEBUG] Übersetzte Datenbank-Einträge:")
-            print(df[["correct_species", "selected_species"]].drop_duplicates())
-
-            # 🔹 Lade die Artenliste der aktuellen Runde (Deutsch oder Englisch)
-            session_species = get_species_for_current_session()
-            print(f"[DEBUG] Arten der aktuellen Runde: {session_species}")
-
-
-            # 🔹 Berechne die Anzahl der richtigen und falschen Antworten
-            correct_answers = df["is_correct"].sum()  # Summe aller "1" (richtige Antworten)
-            wrong_answers = len(df) - correct_answers  # Rest sind falsche Antworten
-
-        # 🔹 Erstelle eine nxn-Matrix mit 0-Werten basierend auf der `species_list`
-        matrix = pd.DataFrame(
-            np.zeros((len(session_species), len(session_species))),  # Erstelle eine nxn-Matrix mit Nullen
-            index=session_species,  # Zeilen = Artenliste
-            columns=session_species  # Spalten = Artenliste
+        # 🟢 Menü-Button oben links
+        toggle_drawer_btn = ft.IconButton(
+            icon=ft.Icons.ARROW_CIRCLE_LEFT,
+            icon_color=ft.Colors.GREEN_700,
+            icon_size=40,
+            tooltip="Navigation anzeigen",
+            on_click=lambda e: self.page.open(self.drawer)
         )
-
-        # 🔹 Berechne die Confusion Matrix aus den übersetzten Namen
-        crosstab_matrix = pd.crosstab(df["correct_species"], df["selected_species"], rownames=["Correct"],
-                                      colnames=["Predicted"])
-
-        # 🔹 Kopiere Werte in die leere Matrix, ohne Daten zu verlieren
-        matrix = matrix.add(crosstab_matrix, fill_value=0)  # Vermeidet NaNs und bewahrt ursprüngliche Matrix-Struktur
-
-        print(f"[DEBUG] Finalisierte Confusion Matrix:\n{matrix}")
-
-        # 🔹 Jetzt die Confusion Matrix plotten
-        plot_final_stats_matrix(matrix)
-
-        def load_confusion_matrix_image():
-            """Lädt das gespeicherte Confusion Matrix PNG als Flet Image-Element."""
-            return ft.Image(
-                src="matrix_plot.png",
-                width=500,
-                height=500
-            )
-
-        dlg_zoom = ft.AlertDialog(
-            modal=True,
-            title=ft.Text("Geeignete Arten für das Liniendiagramm"),
-            content=ft.Text("Lade Daten..."),  # Platzhalter
-            actions=[
-                ft.TextButton("Schließen", on_click=lambda e: close_zoom_dialog(e))  # 🔹 Close-Funktion zuweisen
-            ],
-            actions_alignment=ft.MainAxisAlignment.END,  # 🔹 Button rechts ausrichten
-        )
-
-        page.overlay.append(dlg_zoom)  # ✅ Direkt zu `page.overlay` hinzufügen
-
-        def close_zoom_dialog(e):
-            """Schließt den Info-Dialog."""
-            dlg_zoom.open = False  # Schließt das Fenster
-            e.page.update()  # UI-Update, damit es wirklich verschwindet
-
-        def show_zoom_dialog(e):
-
-            # 🔹 Dialog mit großem Bild aktualisieren
-            dlg_zoom.title = ft.Text("Confusion Matrix", color="white")  # Weißer Titel für besseren Kontrast
-            dlg_zoom.content = ft.Column(
-                controls=[
-                    ft.Image(
-                        src="matrix_plot.png",
-                        width=1000,
-                        height=1000,  #
-                        fit=ft.ImageFit.CONTAIN
-                    )
-                ],
-                height=800,  # ❗ Begrenzte Höhe für Scrollfunktion
-                scroll=ft.ScrollMode.AUTO  # ❗ Automatisches Scrollen aktivieren
-            )
-
-            # 🔹 Dialog-Design anpassen
-            dlg_zoom.bgcolor = ft.Colors.BLUE_GREY_900  # Hintergrund dunkler machen
-            dlg_zoom.modal = True  # Blockiert Interaktion mit anderen Elementen
-
-            # **Seite öffnen und updaten
-            dlg_zoom.open = True
-            e.page.update()
-
-        #Plotten der kummulativen
-        plot_cumulative_accuracy()
-
-        def load_cummulative_accuracy_image():
-            """Lädt das gespeicherte Confusion Matrix PNG als Flet Image-Element."""
-            return ft.Image(
-                src="cumulative_accuracy.png",
-                width=500,
-                height=500
-            )
-
-
-        # 🔹 Lade einmalig den Top-3-Text und speichere ihn
-        self.top3_text = get_top3_text()
-
-
-
-        #Piechart
-        normal_radius = 50
-        hover_radius = 60
-        normal_title_style = ft.TextStyle(
-            size=16, color=ft.Colors.WHITE, weight=ft.FontWeight.BOLD
-        )
-        hover_title_style = ft.TextStyle(
-            size=22,
-            color=ft.Colors.WHITE,
-            weight=ft.FontWeight.BOLD,
-            shadow=ft.BoxShadow(blur_radius=2, color=ft.Colors.BLACK54),
-        )
-
-        def on_chart_event(e: ft.PieChartEvent):
-            """Reagiert auf Hover-Events und passt die Darstellung der Segmente an."""
-            for idx, section in enumerate(chart.sections):
-                if idx == e.section_index:
-                    section.radius = hover_radius
-                    section.title_style = hover_title_style
-                else:
-                    section.radius = normal_radius
-                    section.title_style = normal_title_style
-            chart.update()
-
-        # 🔹 Werte für richtig/falsch
-        total_answers = correct_answers + wrong_answers
-        correct_percent = int((correct_answers / total_answers) * 100) if total_answers > 0 else 0
-        wrong_percent = 100 - correct_percent  # Rest sind falsche Antworten
-
-        # 🔹 Interaktive Pie Chart erstellen
-        chart = ft.PieChart(
-            sections=[
-                ft.PieChartSection(
-                    correct_percent,
-                    title=f"{correct_percent}%",
-                    title_style=normal_title_style,
-                    color=ft.Colors.GREEN,
-                    radius=normal_radius,
-                ),
-                ft.PieChartSection(
-                    wrong_percent,
-                    title=f"{wrong_percent}%",
-                    title_style=normal_title_style,
-                    color=ft.Colors.RED,
-                    radius=normal_radius,
-                ),
-            ],
-            sections_space=0,  # Kein Abstand zwischen den Sektoren
-            center_space_radius=40,  # Platz in der Mitte der Pie Chart
-            on_chart_event=on_chart_event,  # Hover-Effekt aktivieren
-            width=400,  # Breite der Grafik vergrößern
-            height=400,
-        )
-
-        # 🔹 Überschrift + Beschreibung hinzufügen
-        pie_chart = ft.Column(
-            controls=[
-                chart,  # Die interaktive Pie Chart
-            ],
-            alignment=ft.MainAxisAlignment.CENTER,
-            horizontal_alignment=ft.CrossAxisAlignment.CENTER,
-        )
-
-        # 📊 Daten laden (nur für aktuelle Session)
-        species_data = load_species_accuracy_for_session(self.page)
-
-        # 🔹 Feste Abstände setzen (3 Arten = feste Breite)
-        bar_width = 40
-        space_between_bars = 100  #  Abstand zwischen Balken
-        total_bars = len(species_data)
-        chart_width = max(900, total_bars * (bar_width + space_between_bars))  #  Mindestbreite 800px, sonst skaliert
-
-        # 🔹 Bar Chart Gruppen erstellen
-        bars = []
-        for i, (species, values) in enumerate(species_data.items()):
-            accuracy = values["accuracy"]
-            total_count = values["total_count"]
-
-            bars.append(
-                ft.BarChartGroup(
-                    x=i,  # Position auf der X-Achse
-                    bar_rods=[
-                        ft.BarChartRod(
-                            from_y=0,
-                            to_y=accuracy,
-                            width=bar_width,  # ❗ Konstante Balkenbreite
-                            color=ft.Colors.GREEN_ACCENT_400,
-                            tooltip=f"{species}\nRichtig: {accuracy:.0f}%\nGesamtzahl Audios: {total_count}",
-                            border_radius=5,
-                        )
-                    ]
-                )
-            )
-
-        # 🔹 Barchart-Widget mit festen Y-Achsen-Werten (0-100%)
-        bar_chart = ft.BarChart(
-            bar_groups=bars,
-            border=ft.border.only(bottom=ft.border.BorderSide(1, "white"), left=ft.border.BorderSide(1, "white")),
-            horizontal_grid_lines=ft.ChartGridLines(interval=10),
-            vertical_grid_lines=ft.ChartGridLines(interval=2),
-            left_axis=ft.ChartAxis(
-                title=ft.Text("Prozent richtige Antworten", style=ft.TextStyle(color="white")),
-                title_size=40, labels_size=40,
-                labels=[
-                    ft.ChartAxisLabel(value=i, label=ft.Text(f"{i}", style=ft.TextStyle(color="white")))
-                    for i in range(0, 101, 10)
-                ],
-            ),
-            bottom_axis=ft.ChartAxis(
-                labels_size=40, title_size=40,
-                title=ft.Text("Arten", style=ft.TextStyle(color="white")),
-                labels=[ft.ChartAxisLabel(value=i, label=ft.Text(species, style=ft.TextStyle(color="white"), rotate=0))
-                        for i, species in enumerate(species_data.keys())],
-            ),
-            tooltip_bgcolor="black",
-            max_y=100,
-            width=chart_width,  # ❗ Dynamische Breite je nach Anzahl der Balken
-            height=550,
-        )
-
-        # 🔹 Scrollbaren Container erstellen
-        scrollable_chart = ft.Row(
-            controls=[bar_chart],
-            scroll=ft.ScrollMode.ALWAYS  # ❗ Immer scrollbar, falls Diagramm zu groß ist
-        )
-
-        def load_species_accuracy_over_time(species_name):
-            """Lädt die Erkennungsrate pro Session für eine bestimmte Art."""
-
-            # 🔹 Wissenschaftlichen Namen suchen
-            species_mapping = lookup_species(species_name, species_df)
-            if not species_mapping:
-                print(f"[WARN] Art '{species_name}' wurde nicht gefunden!")
-                return None
-
-            scientific_name = species_mapping["Wissenschaftlich"].strip().lower()
-            display_name = species_mapping[species_mapping["display_language"]]
-
-            # 🔹 Falls in der Datenbank mit `+` gespeichert, Formatierung anpassen
-            scientific_name_db = scientific_name.replace(" ", "+")  # SQLite speichert mit `+`
-            print(f"[DEBUG] SQLite-Suchname: '{scientific_name_db}' (Original: '{scientific_name}')")
-
-            conn = sqlite3.connect("game_results.db")
-            query = """
-                SELECT session_id, 
-                       ROUND(AVG(is_correct) * 100) AS accuracy,  
-                       COUNT(*) AS total_count
-                FROM results
-                WHERE correct_species = ?
-                GROUP BY session_id
-                HAVING total_count >= 5  -- Filter: Mindestens 5 Audios pro Session
-                ORDER BY session_id
-            """
-            df = pd.read_sql_query(query, conn, params=(scientific_name_db,))
-            conn.close()
-
-            if df.empty:
-                print(f"[WARN] Keine ausreichenden Daten für '{display_name}'!")
-                return None
-
-            print(f"[DEBUG] Geladene Daten für '{display_name}':\n{df}")
-            return df, display_name  # Rückgabe als Tupel (DataFrame + Anzeigesprache)
-
-        def get_valid_species_for_plotting():
-            """Lädt alle Arten, die in mindestens einer Session ≥5 Audios haben, für den Info-Dialog."""
-            conn = sqlite3.connect("game_results.db")
-            query = """
-                SELECT correct_species, 
-                       COUNT(DISTINCT session_id) AS valid_sessions, 
-                       SUM(total_count) AS total_audios  
-                FROM (
-                    SELECT correct_species, session_id, COUNT(*) AS total_count
-                    FROM results
-                    GROUP BY correct_species, session_id
-                    HAVING total_count >= 5  
-                ) AS filtered
-                GROUP BY correct_species
-                ORDER BY valid_sessions DESC, total_audios DESC;
-            """
-            df = pd.read_sql_query(query, conn)
-            conn.close()
-
-            if df.empty:
-                print("[WARN] Keine gültigen Arten für das Liniendiagramm!")
-                return df  # Gibt einen leeren DataFrame zurück
-
-            print("[DEBUG] Geladene Arten vor Übersetzung:\n", df)
-
-            # 🔹 Namen ins gewünschte Anzeigeformat übersetzen (Deutsch/Englisch)
-            df["correct_species"] = df["correct_species"].apply(
-                lambda x: lookup_species(x, species_df)["Deutsch"] if lookup_species(x, species_df) else x
-            )
-
-            print("[DEBUG] Übersetzte Arten für das Liniendiagramm:\n", df)
-
-            return df
-
-
-        dlg_species_info = ft.AlertDialog(
-            modal=True,
-            title=ft.Text("Geeignete Arten für das Liniendiagramm"),
-            content=ft.Text("Lade Daten..."),  # Platzhalter
-            actions=[
-                ft.TextButton("Schließen", on_click=lambda e: close_info_dialog(e))  # 🔹 Close-Funktion zuweisen
-            ],
-            actions_alignment=ft.MainAxisAlignment.END,  # 🔹 Button rechts ausrichten
-        )
-
-        page.overlay.append(dlg_species_info)  # ✅ Direkt zu `page.overlay` hinzufügen
-
-        def close_info_dialog(e):
-            """Schließt den Info-Dialog."""
-            dlg_species_info.open = False  # Schließt das Fenster
-            e.page.update()  # UI-Update, damit es wirklich verschwindet
-
-        def show_info_dialog(e):
-            """Aktualisiert den Info-Dialog mit den gültigen Arten und zeigt ihn an."""
-            valid_species_df = get_valid_species_for_plotting()
-
-            if valid_species_df.empty:
-                species_text = "Keine Arten erfüllen die Mindestanforderungen."
-            else:
-                species_text = "\n".join(
-                    f"{row['correct_species']} – {row['valid_sessions']} Sessions (insg. {row['total_audios']} Audios)"
-                    for _, row in valid_species_df.iterrows()
-                )
-
-            # 🔹 Inhalt des Dialogs aktualisieren
-            dlg_species_info.title = ft.Text("Geeignete Arten für das Liniendiagramm")
-            dlg_species_info.content = ft.Text(species_text)
-
-            # 🔹 **Dialog öffnen**
-            dlg_species_info.open = True
-
-            # 🔄 **Seite updaten, damit das UI aktualisiert wird**
-            e.page.update()
-
-        def build_species_line_chart(species_name):
-            """Erstellt ein Liniendiagramm der Erkennungsrate einer Art über Sessions mit gleichmäßig verteilter X-Achse."""
-
-            # 🔹 Daten für die gesuchte Art abrufen
-            result = load_species_accuracy_over_time(species_name)
-            if not result:
-                print(f"[WARN] Keine Daten für '{species_name}' verfügbar!")
-                return None
-
-            df, display_name = result
-
-            # 🔹 Gleichmäßige X-Achse erstellen (Sessions von 0 bis n-1 durchnummerieren)
-            df = df.reset_index(drop=True)  # Index neu setzen für gleichmäßige Werte
-            df["plot_x"] = range(len(df))  # Gleichmäßige X-Werte von 0 bis n-1
-
-            # 🔹 Linien-Chart-Daten erstellen
-            line_data_series = [
-                ft.LineChartDataPoint(row["plot_x"], row["accuracy"]) for _, row in df.iterrows()
-            ]
-
-            # 🔹 Stil angepasst an den BarChart
-            return ft.LineChart(
-                data_series=[
-                    ft.LineChartData(
-                        data_points=line_data_series,
-                        stroke_width=3,  # Dickere Linie für bessere Sichtbarkeit
-                        color=ft.Colors.GREEN_ACCENT_400,  # Gleiche Farbe wie BarChart
-                        curved=False,  # Gerade Linienführung
-                        stroke_cap_round=False
-                    )
-                ],
-                min_y=0, max_y=100,  # Y-Achse bleibt immer bei 0-100%
-                min_x=0, max_x=len(df) - 1,  # X-Achse wird gleichmäßig verteilt
-                border=ft.border.only(bottom=ft.border.BorderSide(1, "white"), left=ft.border.BorderSide(1, "white")),
-                horizontal_grid_lines=ft.ChartGridLines(interval=20, color="grey"),  # Y-Achse Raster (20er Schritte)
-                vertical_grid_lines=ft.ChartGridLines(interval=1, color="grey"),  # Gleichmäßige X-Achse
-                left_axis=ft.ChartAxis(
-                    title=ft.Text("Prozent richtige Antworten", style=ft.TextStyle(color="white")),
-                    title_size=40, labels_size=40,
-                    labels=[
-                        ft.ChartAxisLabel(value=i, label=ft.Text(f"{i}%", style=ft.TextStyle(color="white")))
-                        for i in range(0, 101, 10)
-                    ],
-                ),
-                bottom_axis=ft.ChartAxis(
-                    labels_size=40, title_size=40,
-                    title=ft.Text("Sessions", style=ft.TextStyle(color="white")),
-                    labels=[ft.ChartAxisLabel(value=i, label=ft.Text(str(sid), style=ft.TextStyle(color="white")))
-                            for i, sid in enumerate(df["session_id"])],  # Echte Sessions als Labels
-                ),
-                tooltip_bgcolor="black",
-                width=800,  # Breite
-                height=500,  # Höhe
-            )
-
-        def load_daily_stats():
-            """Lädt die Anzahl an Audios und die durchschnittliche Korrektheit pro Tag."""
-            conn = sqlite3.connect("game_results.db")
-            query = """
-                SELECT strftime('%Y-%m-%d', timestamp) AS day,  -- ✅ Holt das Datum ohne Uhrzeit
-                       COUNT(*) AS total_audios, 
-                       ROUND(AVG(is_correct) * 100) AS avg_accuracy 
-                FROM results
-                GROUP BY day
-                ORDER BY day;
-            """
-            df = pd.read_sql_query(query, conn)
-            conn.close()
-
-            if df.empty:
-                print("[WARN] Keine Daten für die tägliche Analyse verfügbar!")
-                return None
-
-            print(f"[DEBUG] Geladene Tagesstatistik:\n{df}")
-            return df
-
-        def build_daily_stats_chart(data_type="total_audios"):
-            """Erstellt ein LineChart für die tägliche Analyse, entweder Anzahl an Audios oder Korrektheit."""
-
-            df = load_daily_stats()
-            if df is None:
-                return None
-
-            # 🔹 X-Achse: Gleichmäßige Verteilung der Tage (anstatt Datumswerte direkt)
-            line_data_series = [
-                ft.LineChartDataPoint(
-                    x=i,
-                    y=row[data_type]
-                )
-                for i, (_, row) in enumerate(df.iterrows())
-            ]
-
-            # 🔹 Diagramm erstellen
-            return ft.LineChart(
-                data_series=[
-                    ft.LineChartData(
-                        data_points=line_data_series,
-                        stroke_width=3,
-                        color=ft.Colors.BLUE if data_type == "total_audios" else ft.Colors.GREEN_ACCENT_400,
-                        curved=False,
-                        stroke_cap_round=False
-                    )
-                ],
-                min_y=0,
-                max_y=max(df[data_type]) + 10,  # Puffer oben für bessere Lesbarkeit
-                min_x=0,
-                max_x=len(df) - 1,
-                border=ft.border.only(bottom=ft.border.BorderSide(1, "white"), left=ft.border.BorderSide(1, "white")),
-                horizontal_grid_lines=ft.ChartGridLines(interval=20, color="grey"),
-                vertical_grid_lines=ft.ChartGridLines(interval=1, color="grey"),
-                left_axis=ft.ChartAxis(
-                    title=ft.Text(
-                        "Gesamtanzahl Audios" if data_type == "total_audios" else "Durchschnittliche Korrektheit",
-                        style=ft.TextStyle(color="white")),
-                    title_size=40, labels_size=40,
-                    labels=[
-                        ft.ChartAxisLabel(value=i, label=ft.Text(f"{int(i)}", style=ft.TextStyle(color="white")))
-                        for i in range(0, int(max(df[data_type]) + 10), 10)
-                    ],
-                ),
-                bottom_axis=ft.ChartAxis(
-                    labels_size=40, title_size=40,
-                    title=ft.Text("Datum", style=ft.TextStyle(color="white")),
-                    labels=[ft.ChartAxisLabel(value=i, label=ft.Text(day, style=ft.TextStyle(color="white")))
-                            for i, day in enumerate(df["day"])]
-                ),
-
-            tooltip_bgcolor="black",
-                width=800,
-                height=500,
-            )
-
-        def build_dynamic_chart_section():
-            """Erstellt die UI mit dem dynamischen LineChart + Infowechsel-Button."""
-
-            # 🔹 Initiale Werte
-            current_data_type = "total_audios"
-            chart_container = ft.Container(width=800, height=500, content=build_daily_stats_chart(current_data_type))
-
-            def on_toggle_chart(e):
-                """Wechselt zwischen Gesamtanzahl an Audios und Korrektheit."""
-                nonlocal current_data_type
-                current_data_type = "avg_accuracy" if current_data_type == "total_audios" else "total_audios"
-                chart_container.content = build_daily_stats_chart(current_data_type)
-                e.page.update()  # UI-Update auslösen
-
-            # 🔹 Button zum Wechseln der Datenquelle
-            toggle_button = ft.ElevatedButton("Infowechsel", on_click=on_toggle_chart)
-
-            return ft.Column(
-                controls=[
-                    chart_container,  # Platz für das Diagramm
-                    toggle_button  # Infowechsel-Button
-                ],
-                alignment=ft.MainAxisAlignment.CENTER
-            )
 
         # **Top-Bar mit Zurück- & Wiederholen-Button und Titel**
-        top_bar = ft.Row(
-            alignment=ft.MainAxisAlignment.SPACE_BETWEEN,  # Buttons nach links & rechts verteilen
-            vertical_alignment=ft.CrossAxisAlignment.CENTER,
-            controls=[
-                # 🔹 Linker Bereich: "Back to Menu"
-                ft.Container(
-                    expand=1,
-                    alignment=ft.alignment.center_left,
-                    content=ft.OutlinedButton(
-                        text="Back to Menu",
-                        icon=ft.Icons.MENU,
-                        icon_color="white",
-                        style=ft.ButtonStyle(
-                            bgcolor={"": "green_100", ft.ControlState.DISABLED: "grey_100"},
-                            color={"": "white", ft.ControlState.DISABLED: "grey"}
-                        ),
-                        on_click=lambda e: page.go("/")
-                    )
-                ),
-
-                # 🔹 **Mittlerer Bereich: Titel "Ergebnisse"**
-                ft.Container(
-                    expand=2,
-                    alignment=ft.alignment.center,
-                    content=ft.Text("Ergebnisse", size=30, weight=ft.FontWeight.BOLD, color="white")
-                ),
-
-                # 🔹 Rechter Bereich: "Repeat Game"
-                ft.Container(
-                    expand=1,
-                    alignment=ft.alignment.center_right,
-                    content=ft.OutlinedButton(
-                        text="Repeat Game",
-                        icon=ft.Icons.REPLAY,
-                        icon_color="white",
-                        style=ft.ButtonStyle(
-                            bgcolor={"": "green_100", ft.ControlState.DISABLED: "grey_100"},
-                            color={"": "white", ft.ControlState.DISABLED: "grey"}
-                        ),
-                        on_click=lambda e: page.go("/game")  # Falls gewünscht
-                    )
-                ),
-            ],
-        )
-
-        # 🔹 **Dynamischer Content-Bereich** -->Muss direkt index 0 wiederspiegeln, damit es angezeigt wird
-        content_area = ft.Column(
-            expand=True,
-            controls=[
-                ft.Column(
-                    controls=[
-                        ft.Text("Ergebnisübersicht", size=24, weight=ft.FontWeight.BOLD, color="white"),
-                        ft.Text(f"Hier siehst du die Gesamtstatistik. {correct_answers} richtige und {wrong_answers} falsche Antworten von insgesamt {total_answers} Durchgängen", color="white"),
-                        pie_chart
-                    ]
-                )
-            ]
-        )
-
-        def change_page(e):
-            """Ändert den Inhalt basierend auf der NavigationRail-Auswahl."""
-            selected_index = e.control.selected_index
-            print(f"[DEBUG] Navigation geändert zu Index: {selected_index}")
-
-            content_area.controls.clear()  # Vorherigen Inhalt entfernen
-
-            if selected_index == 1:  # Übersicht mit Pie Chart
-                content_area.controls.append(
-                    ft.Column(
-                        controls=[
-                            ft.Text("Ergebnisübersicht", size=24, weight=ft.FontWeight.BOLD, color="white"),
-                            ft.Text(f"Hier siehst du die Gesamtstatistik. {correct_answers} richtige und {wrong_answers} falsche Antworten von insgesamt {total_answers} Durchgängen", color="white"),
-                            pie_chart  # Füge die Pie Chart hier ein
-                        ]
-                    )
-                )
-
-            elif selected_index == 2:  # Graph 1
-                content_area.controls.append(
-                    ft.Column(
-                        controls=[
-                            ft.Text("Graph 1", size=24, weight=ft.FontWeight.BOLD, color="white"),
-                            scrollable_chart,
-                        ]
-                    )
-                )
-
-            elif selected_index == 3:  # Confusion Matrix in Graph 2
-                # Entferne alte Confusion Matrix aus `content_area`
-                content_area.controls.clear()
-                content_area.controls.append(
-                    ft.Column(
-                        controls=[
-                            ft.Text("Vergleich: Richtig & Falsch", size=24, weight=ft.FontWeight.BOLD, color="white"),
-                            ft.Text("Diese Matrix zeigt, welche Arten oft verwechselt wurden."),
-                            ft.Row(  # Hier die Bilder nebeneinander anordnen
-                                controls=[
-                load_confusion_matrix_image(),  # Füge das Bild der Confusion Matrix hier ein
-                                    ft.ElevatedButton(
-                                        text="Bild vergrößern",
-                                        icon=ft.Icons.ZOOM_IN,
-                                        on_click=show_zoom_dialog # Button ruft das Popup auf
-                                    )
-                                ],
-                                alignment=ft.MainAxisAlignment.CENTER  # Zentrieren
-                            )
-                        ]
-                    )
-                )
-
-            elif selected_index == 5:  # Analyse
-                content_area.controls.clear()
-                content_area.controls.append(
-                    ft.Column(
-                        controls=[
-                            ft.Text("Analyse", size=24, weight=ft.FontWeight.BOLD, color="white"),
-                            ft.Text("Hier gibt es tiefere statistische Einblicke."),
-                            self.top3_text,
-                            ft.Row(  # Hier die Bilder nebeneinander anordnen
-                                controls=[
-                                    load_cummulative_accuracy_image()
-                                ],
-                                alignment=ft.MainAxisAlignment.CENTER  # Zentrieren
-                            )
-                        ]
-                    )
-                )
-
-            elif selected_index == 6:  # Entwicklung der Erkennungsrate über Sessions
-                content_area.controls.clear()
-
-                # 🔹 Eingabefeld für Art-Suche
-                search_field = ft.TextField(label="Art suchen (Deutsch, Englisch oder Wissenschaftlich)", width=400)
-
-
-                # 🔹 Container für das Diagramm
-                chart_container = ft.Container(width=700, height=500)
-
-                def on_search(e):
-                    """Wird ausgeführt, wenn der Nutzer auf 'Suchen' klickt."""
-                    chart = build_species_line_chart(search_field.value)  # Diagramm für gesuchte Art
-                    chart_container.content = chart  # Aktualisiere den Container mit der Grafik
-                    content_area.update()  # UI-Update auslösen
-
-                # 🔹 Such-Button
-                search_button = ft.ElevatedButton("Suchen", on_click=on_search)
-
-                # 🔹 Info-Button in Flet einbauen
-                info_button = ft.IconButton(
-                    icon=ft.Icons.INFO_OUTLINE,
-                    tooltip="Welche Arten sind sinnvoll für das Liniendiagramm?",
-                    on_click=show_info_dialog,
-                )
-
-                # 🔹 UI-Elemente in den Content-Bereich setzen
-                content_area.controls.append(
-                    ft.Column(
-                        controls=[
-                            ft.Row([search_field, search_button, info_button], alignment=ft.MainAxisAlignment.CENTER),
-                            chart_container  # Hier wird das Diagramm geladen
-                        ],
-                        alignment=ft.MainAxisAlignment.CENTER
-                    )
-                )
-
-                content_area.update()  # Flet-UI updaten
-
-            elif selected_index == 7:  # 🔹 Neue Seite für das dynamische Diagramm
-                content_area.controls.clear()
-                content_area.controls.append(build_dynamic_chart_section())
-                content_area.update()
-
-            self.page.update()  # UI-Update erzwingen
-
-        # 🔹 **Navigation Rail (links)**
-        navigation_rail = ft.NavigationRail(
-            bgcolor=ft.Colors.BLUE_GREY_800,
-            selected_index=1,
-            on_change=change_page,
-            label_type=ft.NavigationRailLabelType.ALL,
-            expand=False,
-            indicator_color="green",  # Farbe des aktiven Elements
-
-            # 🔹 Stil für Labels & Icons
-            unselected_label_text_style=ft.TextStyle(color="white"),  # Textfarbe für nicht gewählte Labels
-            selected_label_text_style=ft.TextStyle(color="white"),  # Textfarbe für aktive Auswahl
-            destinations=[
-                # ---  "Aktuelle Spielrunde" ---
-                ft.NavigationRailDestination(
-                    label_content=ft.Text("___Aktuelle Runde___", color="green", size=12, weight=ft.FontWeight.BOLD),
-                    disabled=True
-                ),
-                ft.NavigationRailDestination(
-                    icon=ft.Icon(ft.Icons.DASHBOARD, color="grey"),  # Grau für nicht aktiv
-                    selected_icon=ft.Icon(ft.Icons.DASHBOARD, color="black"),  # Schwarz für aktiv
-                    label="Übersicht"
-                ),
-                ft.NavigationRailDestination(
-                    icon=ft.Icon(ft.Icons.BAR_CHART, color="grey"),
-                    selected_icon=ft.Icon(ft.Icons.BAR_CHART, color="black"),
-                    label="Graph 1"
-                ),
-                ft.NavigationRailDestination(
-                    icon=ft.Icon(ft.Icons.SHOW_CHART, color="grey"),
-                    selected_icon=ft.Icon(ft.Icons.SHOW_CHART, color="black"),
-                    label="Graph 2"
-                ),
-                ft.NavigationRailDestination(
-                    label_content=ft.Text("___Gesamt Analyse___", color="green", size=12, weight=ft.FontWeight.BOLD),
-                    disabled=True
-                ),
-                ft.NavigationRailDestination(
-                    icon=ft.Icon(ft.Icons.INSIGHTS, color="grey"),
-                    selected_icon=ft.Icon(ft.Icons.INSIGHTS, color="black"),
-                    label="Analyse"
-                ),
-                ft.NavigationRailDestination(
-                    icon=ft.Icon(ft.Icons.INSIGHTS, color="grey"),
-                    selected_icon=ft.Icon(ft.Icons.INSIGHTS, color="black"),
-                    label="Species"
-                ),
-                ft.NavigationRailDestination(
-                    icon=ft.Icon(ft.Icons.INSIGHTS, color="grey"),
-                    selected_icon=ft.Icon(ft.Icons.INSIGHTS, color="black"),
-                    label="Day Perform"
-                ),
-            ],
-        )
-
-        # 🔹 **Gesamtes Layout mit `Column`, um Top-Bar + Navigation zu kombinieren**
-        self.controls = [
-            ft.Column(
-                expand=True,
+        top_bar = ft.Container(
+            bgcolor=ft.Colors.GREEN_700,  # Oder z.B. ft.Colors.GREEN_ACCENT_400
+            padding=10,  # Optional etwas Innenabstand
+            content=ft.Row(
+                alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+                vertical_alignment=ft.CrossAxisAlignment.CENTER,
                 controls=[
-                    top_bar,  # **Fixierte Top-Bar bleibt immer sichtbar**
-                    ft.Row(
-                        expand=True,
-                        controls=[
-                            navigation_rail,  # Links die Navigation
-                            ft.Container(content=content_area, expand=True),  # Rechts der Content-Bereich
-                        ]
+                    ft.Container(
+                        expand=1,
+                        alignment=ft.alignment.center_left,
+                        content=ft.OutlinedButton(
+                            text="Back to Menu",
+                            icon=ft.Icons.MENU,
+                            icon_color="white",
+                            style=ft.ButtonStyle(
+                                bgcolor={"": "green_100", ft.ControlState.DISABLED: "grey_100"},
+                                color={"": "white", ft.ControlState.DISABLED: "grey"},
+                                side=ft.BorderSide(1, ft.Colors.WHITE)
+                            ),
+                            on_click=lambda e: page.go("/")
+                        )
+                    ),
+                    ft.Container(
+                        expand=2,
+                        alignment=ft.alignment.center,
+                        content=ft.Text("Ergebnisse", size=30, weight=ft.FontWeight.BOLD, color="white")
+                    ),
+                    ft.Container(
+                        expand=1,
+                        alignment=ft.alignment.center_right,
+                        content=ft.OutlinedButton(
+                            text="Repeat Game",
+                            icon=ft.Icons.REPLAY,
+                            icon_color="white",
+                            style=ft.ButtonStyle(
+                                bgcolor={"": "green_100", ft.ControlState.DISABLED: "grey_100"},
+                                color={"": "white", ft.ControlState.DISABLED: "grey"},
+                                side=ft.BorderSide(1, ft.Colors.WHITE)
+                            ),
+                            on_click=lambda e: page.go("/game")
+                        )
                     ),
                 ]
             )
+        )
+
+        # 🟢 Handler-Funktion innerhalb von __init__
+        def change_page_handler(e):
+            selected_index = e.control.selected_index
+            self.change_page(selected_index)
+
+        self.drawer = ft.NavigationDrawer(
+            on_change=change_page_handler,
+            controls=[
+                ft.Container(height=20),
+                ft.Text("Aktuelle Runde", style="titleMedium", color="black", text_align=ft.TextAlign.CENTER),
+                ft.Divider(),
+                ft.NavigationDrawerDestination(
+                    icon=ft.Icons.HOME,
+                    label="Runde beendet!"
+                ),
+                ft.NavigationDrawerDestination(
+                    icon=ft.Icons.PIE_CHART,
+                    label="Gesamtübersicht"
+                ),
+                ft.NavigationDrawerDestination(
+                    icon=ft.Icons.BAR_CHART,
+                    label="Richtige Antworten pro Art"
+                ),
+                ft.NavigationDrawerDestination(
+                    icon=ft.Icons.GRID_ON,
+                    label="Confusion Matrix"
+                ),
+                ft.Text("Gesamt Analyse", style="titleMedium", color="black", text_align=ft.TextAlign.CENTER),
+                ft.Divider(),
+                ft.NavigationDrawerDestination(
+                    icon=ft.Icons.INSIGHTS,
+                    label="Top 3 Arten"
+                ),
+                ft.NavigationDrawerDestination(
+                    icon=ft.Icons.SHOW_CHART,
+                    label="Liniendiagramm"
+                ),
+                ft.NavigationDrawerDestination(
+                    icon=ft.Icons.AREA_CHART,
+                    label="Dynamisches Diagramm"
+                ),
+            ]
+        )
+
+
+
+        self.controls = [
+            self.drawer,
+            ft.Column(
+                controls=[
+                    top_bar,
+                    ft.Row([
+                        toggle_drawer_btn,
+                        ft.Text("Navigation", size=15, color="white")
+                    ], alignment=ft.MainAxisAlignment.START),
+                    self.content_area
+                ],
+                expand=True,
+            )
         ]
+
+        # Starte mit Ansicht 0 (z.B. Runde beendet)
+        self.change_page(0)
+
+    # 🔁 Methode zur Änderung des Inhalts
+    def change_page(self, index):
+        self.content_area.controls.clear()
+
+        if index == 0:
+            self.content_area.controls.append(
+                ft.Column(
+                    controls=[
+                        ft.Text("Runde beendet!", size=24, weight=ft.FontWeight.BOLD, color="white"),
+
+                    ]
+                )
+            )
+
+        elif index == 1:
+            self.content_area.controls.append(
+                ft.Column(
+                    controls=[
+                        ft.Text("Gesamtübersicht", size=24, weight=ft.FontWeight.BOLD, color="white"),
+                        ft.Text(
+                            f"Hier siehst du den Anteil an korrekten und falschen Antworten aus der aktuellen Runde ",
+                            color="white"),
+
+                    ]
+                )
+            )
+
+        elif index == 2:
+            self.content_area.controls.append(
+                ft.Column(
+                    controls=[
+                        ft.Text("Richtige Antworten pro Art", size=24, weight=ft.FontWeight.BOLD, color="white"),
+
+                    ]
+                )
+            )
+
+        elif index == 3:
+            self.content_area.controls.append(
+                ft.Column(
+                    controls=[
+                        ft.Text("Confusion-Matrix", size=24, weight=ft.FontWeight.BOLD, color="white"),
+                        ft.Text(
+                            "Diese Matrix zeigt, welche Arten du häufig verwechselt hast. \n Die Zeilen stellen die korrekten Vogelarten dar, die Spalten deine Vorhersagen.Arten bei denen nur die diagonale Zelle grün ist, hast du besonders gut erkannt. Hat eine Art in der Zeile viele oder besonders rote Zellen, hast du sie häufig mit einer anderen Art verwechselt. Die von dir fälschlicherweise angenommene Art, kannst du in der Spalte (oben) ablesen.",
+                            color="white"),
+                        ft.Row(
+                            controls=[
+                                ft.ElevatedButton(
+                                    text="Bild vergrößern",
+                                    icon=ft.Icons.ZOOM_IN
+                                )
+                            ],
+                            alignment=ft.MainAxisAlignment.CENTER
+                        ),
+                    ]
+                )
+            )
+
+        elif index == 5:
+            self.content_area.controls.append(
+                ft.Column(
+                    controls=[
+                        ft.Text("Top 3 Arten", size=24, weight=ft.FontWeight.BOLD, color="white"),
+                        ft.Text(
+                            "Hier siehst du die Arten, die du bis jetzt am besten und am schlechtesten erkannt hast.",
+                            color="white")
+                    ]
+                )
+            )
+
+        elif index == 6:
+            search_field = ft.TextField(label="Art suchen (Deutsch, Englisch oder Wissenschaftlich)", width=400)
+            chart_container = ft.Container(width=700, height=500)
+
+
+
+            search_button = ft.ElevatedButton("Suchen")
+            info_button = ft.IconButton(icon=ft.Icons.INFO_OUTLINE,
+                                        tooltip="Welche Arten sind sinnvoll für das Liniendiagramm?")
+
+            self.content_area.controls.append(
+                ft.Column(
+                    controls=[
+                        ft.Row([search_field, search_button, info_button], alignment=ft.MainAxisAlignment.CENTER),
+                        chart_container
+                    ],
+                    alignment=ft.MainAxisAlignment.CENTER
+                )
+            )
+
+        elif index == 7:
+            self.content_area.controls.append(
+                ft.Column(
+                    controls=[
+                        ft.Text("Top 3 Arten", size=24, weight=ft.FontWeight.BOLD, color="white"),
+                        ft.Text(
+                            "Hier siehst du die Arten, die du bis jetzt am besten und am schlechtesten erkannt hast.",
+                            color="white")
+                    ]
+                )
+            )
+        self.page.update()
+
 
 class OverallSetting(ft.View):
     def __init__(self, page: ft.Page):
         super().__init__(route="/")
         self.page = page
         self.bgcolor = ft.Colors.BLUE_GREY_900
-        self.page.title = "Einstellungen & Gesamtübersicht"
 
         self.dialog_reset_confirm = None  # wird später erstellt
+        self.new_list_name = ft.TextField(
+            label="Eigene Liste",
+            hint_text="Name der Liste: Species A, Species B, ... ",
+            border_color="black",
+            text_style=ft.TextStyle(color="black"),
+            label_style=ft.TextStyle(color="black"),
+            expand=True
+        )
+
+        self.user_lists_column = ft.Column(spacing=10)
+
+
+        add_list_button = ft.ElevatedButton(
+            text="Liste erstellen",
+            icon=ft.Icons.ADD,
+            on_click=self.add_user_list
+        )
+
+        #Alertdialog
+        action_style = ft.ButtonStyle(color=ft.Colors.BLUE)
+        self.confirm_banner = ft.AlertDialog(
+            modal=True,
+            icon=ft.Icon(ft.Icons.WARNING_AMBER_ROUNDED, color=ft.Colors.AMBER, size=40),
+            title=ft.Text("Hinweis"),
+            content=ft.Text("Willst du wirklich alle gespeicherten Daten löschen?"),
+            actions=[
+                ft.TextButton(text="Ja, löschen", style=action_style, on_click=self.execute_pending_delete),
+                ft.TextButton(text="Abbrechen", style=action_style, on_click=self.close_banner)
+            ],
+            actions_alignment=ft.MainAxisAlignment.END
+        )
+
+        self.page.dialog = self.confirm_banner
 
         # "Back to Menu"-Button
         header_row = ft.Row(
@@ -2666,15 +2190,112 @@ class OverallSetting(ft.View):
             ],
         )
 
+        #Einstellungen
+        # 🔹 Inhalte für jedes Panel als ListTile
+        cache_tile = ft.ListTile(
+            title=ft.Text("Alle gespeicherten Bilder löschen"),
+            subtitle=ft.Text("Press the icon to delete Image Cache"),
+            trailing=ft.IconButton(icon=ft.Icons.DELETE,tooltip="Kompletten Cache löschen",on_click=lambda e: self.open_banner_delete("cache"))
+        )
+
+        results_tile = ft.ListTile(
+            title=ft.Text("Alle bisher gespeicherten Ergebnisse (Sessions) löschen"),
+            subtitle=ft.Text("Press the icon to delete Saved Results"),
+            trailing=ft.IconButton(icon=ft.Icons.DELETE, tooltip="Alle Sessions löschen", on_click=lambda e: self.open_banner_delete("results"))
+        )
+
+        # 🔹 ExpansionPanelList mit drei Panels
+        panel_list = ft.ExpansionPanelList(
+            expand_icon_color=ft.Colors.WHITE,
+            elevation=2,
+            divider_color="white",
+            controls=[
+                ft.ExpansionPanel(
+                    header=ft.Container(
+                        alignment=ft.alignment.center,
+                        padding=10,
+                        content=ft.Text(
+                            "Eigene Listen",
+                            weight=ft.FontWeight.BOLD,
+                            style="titleMedium",
+                            color="black"
+                        )
+                    ),
+                    content=ft.Container(
+                        padding=10,
+                        bgcolor=ft.Colors.GREEN_ACCENT_700,
+                        content=ft.Column(
+                            spacing=10,
+                            controls=[
+                                ft.ListTile(
+                                    title=ft.Text(
+                                        "Hier kannst du eigene Listen erstellen, die in den Settings mit angezeigt werden."),
+                                    subtitle=ft.Text("Diese Funktion ist leider noch nicht vorhanden.")
+                                ),
+                                ft.Row([self.new_list_name, add_list_button]),
+                                self.user_lists_column
+                            ]
+                        )
+                    ),
+                    bgcolor=ft.Colors.GREEN_ACCENT_700,
+                    expanded=False
+                ),
+                ft.ExpansionPanel(
+                    header=ft.Container(
+                        alignment=ft.alignment.center,
+                        padding=10,
+                        content=ft.Text(
+                            "Bilder Cache",
+                            weight=ft.FontWeight.BOLD,
+                            style="titleMedium",
+                            color="black")),
+                    content=cache_tile,
+                    bgcolor=ft.Colors.GREEN_ACCENT_400,
+                    expanded=False
+                ),
+                ft.ExpansionPanel(
+                    header=ft.Container(
+                        alignment=ft.alignment.center,
+                        padding=10,
+                        content=ft.Text(
+                            "Gespeicherte Ergebnisse",
+                            weight=ft.FontWeight.BOLD,
+                            style="titleMedium",
+                            color="black")),
+                    content=results_tile,
+                    bgcolor=ft.Colors.GREEN_ACCENT_200,
+                    expanded=False
+                )
+            ]
+        )
+
+        #Contentbereich
+        scrollable_content = ft.Column(
+            controls=[
+                ft.Text("Hier kannst du die gespeicherten Daten verwalten.", color="white"),
+                panel_list
+            ],
+            spacing=20,
+            expand=True,
+            scroll=ft.ScrollMode.AUTO  # Vertikales Scrollen
+        )
+
+
 
 
         # Inhalt setzen
         self.controls = [
             ft.Column(
+                expand=True,
                 controls=[
                     header_row,
-                    text_row
-
+                    text_row,
+                    ft.Container(  # Scrollbarer Bereich für alles weitere
+                        content=scrollable_content,
+                        expand=True,
+                        padding=20,
+                        bgcolor=ft.Colors.BLUE_GREY_900
+                    )
                 ],
                 spacing=20
             )
@@ -2683,51 +2304,102 @@ class OverallSetting(ft.View):
         self.page.dialog = self.dialog_reset_confirm
 
 
-    def load_stats(self):
-        """Lädt aus der SQLite-Datenbank die Anzahl der Spiele und Runden."""
-        conn = sqlite3.connect("results.db")
-        cursor = conn.cursor()
+    def add_user_list(self, e):
+        if not self.new_list_name.value.strip():
+            return  # Leere Eingabe ignorieren
 
-        # Runden zählen
-        cursor.execute("SELECT COUNT(*) FROM results")
-        total_rounds = cursor.fetchone()[0]
-
-        # Höchste Spiel-ID bestimmen (Annahme: 'id' ist die Spiel-ID)
-        cursor.execute("SELECT MAX(game_id) FROM results")
-        result = cursor.fetchone()
-        total_games = result[0] if result[0] is not None else 0
-
-        conn.close()
-        return total_games, total_rounds
-
-    def show_reset_confirm(self, e):
-        """Zeigt den Dialog zur Bestätigung der Löschung."""
-        self.dialog_reset_confirm.open = True
+        list_component = UserList(self.new_list_name.value, self.delete_user_list)
+        self.user_lists_column.controls.append(list_component)
+        self.new_list_name.value = ""
         self.page.update()
 
-    def cancel_reset(self, e):
-        """Schließt den Bestätigungsdialog ohne zu löschen."""
-        self.dialog_reset_confirm.open = False
+    def delete_user_list(self, list_component):
+        self.user_lists_column.controls.remove(list_component)
         self.page.update()
 
-    def confirm_reset(self, e):
-        """Löscht alle Einträge in der Datenbank."""
-        conn = sqlite3.connect("results.db")
-        cursor = conn.cursor()
-        cursor.execute("DELETE FROM results")
-        conn.commit()
-        conn.close()
 
-        # Dialog schließen & UI aktualisieren
-        self.dialog_reset_confirm.open = False
-        self.total_games, self.total_rounds = 0, 0
-        self.info_text.value = "Gespielte Spiele: 0\nGesamte Runden: 0"
+
+    def open_banner_delete(self, delete_type):
+        print("[DEBUG] Öffne Dialog für:", delete_type)
+        self._pending_delete = delete_type
+        self.page.open(self.confirm_banner)
+        self.page.update()  #
+
+    def execute_pending_delete(self, e):
+        if self._pending_delete == "cache":
+            delete_entire_image_cache()
+            print("[INFO] Bild-Cache gelöscht.")
+        elif self._pending_delete == "results":
+            delete_all_results()
+            print("[INFO] Ergebnisse gelöscht.")
+
+        self.confirm_banner.open = False
         self.page.update()
+
+    def close_banner(self, e):
+        self.confirm_banner.open = False
+        self.page.update()
+
+
+class UserList(ft.Column):
+    def __init__(self, list_name, on_delete):
+        super().__init__()
+        self.list_name = list_name
+        self.on_delete = on_delete
+
+        self.display_label = ft.Text(value=list_name, size=16, color="black")
+        self.edit_field = ft.TextField(value=list_name, expand=1)
+
+        self.display_view = ft.Row(
+            alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+            controls=[
+                self.display_label,
+                ft.Row(
+                    controls=[
+                        ft.IconButton(icon=ft.Icons.EDIT, icon_color="black", tooltip="Liste bearbeiten", on_click=self.edit_clicked),
+                        ft.IconButton(icon=ft.Icons.DELETE, icon_color="black", tooltip="Liste löschen", on_click=self.delete_clicked),
+                    ]
+                )
+            ]
+        )
+
+        self.edit_view = ft.Row(
+            visible=False,
+            alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+            controls=[
+                self.edit_field,
+                ft.IconButton(icon=ft.Icons.DONE, tooltip="Speichern", icon_color="black", on_click=self.save_clicked),
+            ]
+        )
+
+        self.controls = [self.display_view, self.edit_view]
+
+    def edit_clicked(self, e):
+        self.edit_field.value = self.display_label.value
+        self.display_view.visible = False
+        self.edit_view.visible = True
+        self.update()
+
+    def save_clicked(self, e):
+        self.display_label.value = self.edit_field.value
+        self.list_name = self.edit_field.value
+        self.display_view.visible = True
+        self.edit_view.visible = False
+        self.update()
+
+    def delete_clicked(self, e):
+        self.on_delete(self)
+
+
+
+
+
+
 
 
 def main(page: ft.Page):
-    page.title = "Quiz App"
-    page.padding = 20
+    page.title = "Sound Bird Quiz"
+    page.padding = ft.padding.all(0)
     page.horizontal_alignment = "center"
     page.vertical_alignment = "top"
     page.bgcolor = ft.Colors.BLUE_GREY_900
