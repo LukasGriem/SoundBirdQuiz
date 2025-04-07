@@ -47,10 +47,10 @@ class AppState:
         thread.start()
 
     def init_database(self):
-        db_path = os.path.join(os.getenv("LOCALAPPDATA"), "SoundBirdQuiz", "game_results.db")
-        os.makedirs(os.path.dirname(db_path), exist_ok=True)
+        self.db_path = os.path.join(os.getenv("LOCALAPPDATA"), "SoundBirdQuiz", "game_results.db")
+        os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
 
-        conn = sqlite3.connect(db_path)
+        conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS results (
@@ -142,7 +142,7 @@ class AppState:
 
     def get_last_session_id(self):
         """Holt die höchste gespeicherte session_id aus der SQLite-Datenbank."""
-        conn = sqlite3.connect("game_results.db")
+        conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
 
         cursor.execute("SELECT MAX(session_id) FROM results")  # Höchste session_id abrufen
@@ -413,7 +413,8 @@ class MainMenu(BasePage):
             "show_images": True,
             "show_spectrogram": True,
             "Lifestage": "",
-            "Geschlecht": ""
+            "Geschlecht": "",
+            "list_name": ""
         }
 
         with open("settings.json", "w", encoding="utf-8") as f:
@@ -747,6 +748,7 @@ class Settings(BasePage):
             "show_spectrogram": self.spectrogram_switch.value,
             "Lifestage": lifestage_value,
             "Geschlecht": sex_value,
+            "list_name": self.app_state.active_list_name
         }
 
         # In Datei speichern
@@ -874,6 +876,7 @@ class Game(BasePage):
             self.show_spectrogram = settings.get("show_spectrogram", False)
             self.selected_lifestage = settings.get("Lifestage", "")
             self.selected_sex = settings.get("Geschlecht", "")
+            self.app_state.active_list_name = settings.get("list_name", "")
         else:
             self.species_mapping = {}
             self.selected_species = []
@@ -882,6 +885,7 @@ class Game(BasePage):
             self.show_spectrogram = False
             self.selected_lifestage = ""
             self.selected_sex = ""
+            self.app_state.active_list_name = ""
 
     def update_species_buttons(self):
         self.species_buttons_container.controls.clear()
@@ -1027,8 +1031,8 @@ class Game(BasePage):
         self.page.update()
 
     def save_result(self, correct, selected, is_correct):
-        list_name = self.app_state.active_list_name if hasattr(self.app_state, "active_list_name") else ""
-        conn = sqlite3.connect("game_results.db")
+        list_name = self.app_state.active_list_name.strip() or None
+        conn = sqlite3.connect(self.app_state.db_path)
         cursor = conn.cursor()
         cursor.execute("""
             INSERT INTO results (session_id, correct_species, selected_species, is_correct, list_name, timestamp)
@@ -1199,6 +1203,7 @@ class Results(BasePage):
         self.session_id = self.app_state.get_last_session_id()
         self.session_accuracy_data = self.overall_accuracy_for_session()
         self.plot_confusion_matrix()
+        self.top_best, self.top_worst, self.top_frequent = self.get_top_species_stats()
 
         self.nav_items = {
             0: [  # Aktuell
@@ -1208,8 +1213,9 @@ class Results(BasePage):
             ],
             1: [  # Gesamt
                 ("Top 3 Arten", ft.Icons.INSIGHTS),
-                ("Liniendiagramm", ft.Icons.SHOW_CHART),
-                ("Diagramm", ft.Icons.AREA_CHART),
+                ("Monatliche Anzahl", ft.Icons.SHOW_CHART),
+                ("Verlauf pro Art", ft.Icons.AREA_CHART),
+                ("Verlauf pro Liste", ft.Icons.AREA_CHART),
             ]
         }
 
@@ -1284,9 +1290,11 @@ class Results(BasePage):
             if index == 0:
                 self.content_area.controls.append(self.build_top3())
             elif index == 1:
-                self.content_area.controls.append(self.build_line_chart())
+                self.content_area.controls.append(self.build_month_chart())
             elif index == 2:
-                self.content_area.controls.append(self.build_dynamic_chart())
+                self.content_area.controls.append(self.build_species_chart())
+            elif index == 3:
+                self.content_area.controls.append(self.build_list_chart())
 
         self.page.update()
 
@@ -1295,6 +1303,40 @@ class Results(BasePage):
             "Ergebnisse anzeigen",
             "Hier findest du eine Übersicht der zuletzt gespielten Runde. Nutze die Navigation links, um einzelne Analysen anzuzeigen. Es gibt zusätzlich die Gesamtanalyse"
         )
+
+    def show_matrix_dialog(self):
+        dialog = ft.AlertDialog(
+            modal=True,
+            title=ft.Text("Confusion Matrix – vergrößert"),
+            content=ft.Container(
+                width=900,
+                height=700,
+                bgcolor=ft.Colors.GREY_700,
+                padding=20,
+                border_radius=10,
+                content=ft.Column(
+                    scroll=ft.ScrollMode.ALWAYS,
+                    horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+                    controls=[
+                        ft.Image(
+                            src="matrix_plot.png",
+                            width=850,
+                            fit=ft.ImageFit.CONTAIN
+                        )
+                    ]
+                )
+            ),
+            actions=[
+                ft.TextButton(
+                    text="Schließen",
+                    on_click=lambda e: self.page.close(dialog)
+                )
+            ],
+            actions_alignment=ft.MainAxisAlignment.END
+        )
+
+        self.page.dialog = dialog
+        self.page.open(dialog)
 
     def build_overview_chart(self):
         chart_with_title, summary_text = self.pie_chart()
@@ -1343,39 +1385,122 @@ class Results(BasePage):
                     "Die Zeilen stellen die korrekten Vogelarten dar, die Spalten deine Vorhersagen.\n"
                     "Arten bei denen nur die diagonale Zelle grün ist, hast du besonders gut erkannt.\n"
                     "Hat eine Art in der Zeile viele oder besonders rote Zellen, hast du sie häufig \nmit einer anderen Art verwechselt."),
-                ft.ElevatedButton("Bild vergrößern", icon=ft.Icons.ZOOM_IN)]
+                ft.ElevatedButton("Bild vergrößern", icon=ft.Icons.ZOOM_IN, on_click=lambda e: self.show_matrix_dialog())]
             ),
-            ft.Image(src="matrix_plot.png", width=500, height=500)],
+            ft.Container(
+                content=ft.Image(src="matrix_plot.png", width=500, height=500),
+                margin=0,
+                padding=0,
+                alignment=ft.alignment.center,
+                bgcolor=ft.Colors.GREY_700,
+                border_radius=10)
+            ],
             alignment=ft.MainAxisAlignment.CENTER
         )
 
-
-
     def build_top3(self):
+        titles = ["Top erkannt", "Schwächste Arten", "Häufigste Arten"]
+        data = [self.top_best, self.top_worst, self.top_frequent]
+
+        cards = []
+        for i, (title, species_list) in enumerate(zip(titles, data)):
+            content_controls = [
+                ft.Text(title, size=18, weight=ft.FontWeight.BOLD, text_align=ft.TextAlign.CENTER),
+                ft.Divider()
+            ]
+
+            for rank, entry in enumerate(species_list):
+                label = f"{rank + 1}. {entry['display_name']}"
+
+                if entry["accuracy"] is None:
+                    # Platzhalter-Text für leere Einträge
+                    value = f"{entry['total']} Audios"
+                    if i == 2:  # Häufigste Arten
+                        value += " – Ø –"
+                else:
+                    if i in [0, 1]:  # Top erkannt oder Schwächste
+                        value = f"{entry['accuracy']:.1f}% – {entry['total']} Audios"
+                    else:  # Häufigste Arten
+                        value = f"{entry['total']} Audios – Ø {entry['accuracy']:.1f}%"
+
+                content_controls.append(
+                    ft.Text(f"{label} – {value}", size=14, color=ft.Colors.ON_SURFACE_VARIANT)
+                )
+
+            cards.append(
+                ft.Container(
+                    content=ft.Column(content_controls, alignment=ft.MainAxisAlignment.CENTER),
+                    bgcolor=ft.Colors.PRIMARY_CONTAINER,
+                    border_radius=10,
+                    padding=15,
+                    col={"sm": 12, "md": 4}
+                )
+            )
+
+        return ft.Column(
+            [
+                ft.Text("Top 3", size=24, weight=ft.FontWeight.BOLD),
+                ft.ResponsiveRow(
+                    controls=cards,
+                    alignment=ft.MainAxisAlignment.CENTER,
+                    spacing=20,
+                    run_spacing=20
+                )
+            ],
+        )
+
+    def build_month_chart(self):
         return ft.Column([
-            ft.Text("Top 3 Arten", size=24, weight=ft.FontWeight.BOLD),
-            ft.Text("Hier siehst du die Arten, die du bisher am besten oder schlechtesten erkannt hast.")
+            ft.Text("Abgespielte Audios pro Monat", size=24, weight=ft.FontWeight.BOLD),
+            ft.Text("Hier kannst du sehen, wie oft du im Monat gespielt hast.\n"
+                    "Wenn du mit dem Curser über die Balken fährst, kannst du unter anderem sehen, wie viele Audios insgesamt richtig & falsch waren.\n"
+                    "Bei zu vielen Arten, kannst du die Grafik nach links & rechts hin verschieben, um alle Balken anzuzeigen."),
+            ft.Text(""),
+            self.monthly_audio_count_chart()
         ])
 
-    def build_line_chart(self):
+    def build_species_chart(self):
+        self.line_chart_output = ft.Container()
+        available_species = self.get_valid_species_for_plotting()
+
+        dropdown = ft.Dropdown(
+            label="Art wählen",
+            hint_text="Art auswählen",
+            options=[ft.dropdown.Option(s) for s in available_species],
+            width=300,
+            on_change=lambda e: self.load_species_chart(e.control.value)
+        )
+
         return ft.Column([
-            ft.Text("Liniendiagramm", size=24, weight=ft.FontWeight.BOLD),
-            ft.Text("Hier könntest du langfristige Trends für bestimmte Arten analysieren.")
+            ft.Text("Analyse nach Art", size=24, weight=ft.FontWeight.BOLD),
+            ft.Text("Wähle eine Art, um die durchschnittliche Erkennungsrate pro Session zu sehen:"),
+            dropdown,
+            ft.Divider(),
+            self.line_chart_output
         ])
 
-    def build_dynamic_chart(self):
-        search_field = ft.TextField(label="Art suchen (Deutsch, Englisch oder Wissenschaftlich)", width=400)
-        chart_container = ft.Container(width=700, height=500)
+    def build_list_chart(self):
+        # Platzhalter für Chart
+        self.line_chart_output = ft.Container()
 
-        search_button = ft.ElevatedButton("Suchen")
-        info_button = ft.IconButton(icon=ft.Icons.INFO_OUTLINE,
-                                    tooltip="Welche Arten sind sinnvoll für das Liniendiagramm?")
+        # Listen für das Dropdown laden
+        available_lists = self.get_played_list_names()
+
+        # Initialwert für das Dropdown
+        self.dropdown = ft.Dropdown(
+            label="Liste wählen",
+            hint_text="Liste auswählen",
+            options=[ft.dropdown.Option(list_name) for list_name in available_lists],
+            width=300,
+            on_change=lambda e: self.load_line_chart_for_list(e.control.value)
+        )
 
         return ft.Column([
-            ft.Text("Diagramm für einzelne Arten", size=24, weight=ft.FontWeight.BOLD),
-            ft.Text("Hier könntest du langfristige Trends für bestimmte Arten analysieren."),
-            ft.Row([search_field, search_button, info_button], alignment=ft.MainAxisAlignment.CENTER),
-            chart_container
+            ft.Text("Analyse nach Listen", size=24, weight=ft.FontWeight.BOLD),
+            ft.Text("Wähle eine Liste, um die durchschnittliche Erkennungsrate pro Session zu sehen:"),
+            self.dropdown,
+            ft.Divider(),
+            self.line_chart_output
         ])
 
     def pie_chart(self):
@@ -1470,7 +1595,7 @@ class Results(BasePage):
             return "Ausbaufähig, aber probiere es doch nochmal!", "sad.gif"
 
     def overall_accuracy_for_session(self):
-        conn = sqlite3.connect("game_results.db")
+        conn = sqlite3.connect(self.app_state.db_path)
         cursor = conn.cursor()
         cursor.execute("SELECT is_correct FROM results WHERE session_id = ?", (self.session_id,))
 
@@ -1569,7 +1694,7 @@ class Results(BasePage):
     def load_species_accuracy_for_session(self):
         print(f"[DEBUG] Lade Daten für Session-ID {self.session_id}")
 
-        conn = sqlite3.connect("game_results.db")
+        conn = sqlite3.connect(self.app_state.db_path)
         cursor = conn.cursor()
 
         # Korrekte Antworten pro Art in der aktuellen Session abrufen
@@ -1606,7 +1731,7 @@ class Results(BasePage):
         print(f"[DEBUG] Erstelle Confusion Matrix für Session-ID {self.session_id}")
 
         # 🔹 Lade alle Ergebnisse aus der aktuellen Session
-        conn = sqlite3.connect("game_results.db")
+        conn = sqlite3.connect(self.app_state.db_path)
         df = pd.read_sql_query(
             "SELECT correct_species, selected_species FROM results WHERE session_id = ?",
             conn,
@@ -1684,6 +1809,369 @@ class Results(BasePage):
         plt.savefig(save_path, transparent=True, dpi=300)
 
         print(f"[DEBUG] Confusion Matrix gespeichert: {save_path}")
+
+    def get_top_species_stats(self):
+        conn = sqlite3.connect(self.app_state.db_path)
+        cursor = conn.cursor()
+
+        # Alle Arten mit ihren Trefferraten
+        cursor.execute("""
+            SELECT correct_species, 
+                   SUM(is_correct) AS correct_count, 
+                   COUNT(*) AS total_count
+            FROM results
+            GROUP BY correct_species
+        """)
+        rows = cursor.fetchall()
+        conn.close()
+
+        species_stats = []
+        for species, correct_count, total_count in rows:
+            if total_count < 10:
+                continue  # Nur Arten mit mindestens 10 Audios
+            accuracy = correct_count / total_count * 100
+            translated = self.app_state.lookup_species(species)
+            display_name = translated["Deutsch"] if translated else species
+            species_stats.append({
+                "species": species,
+                "display_name": display_name,
+                "accuracy": accuracy,
+                "total": total_count
+            })
+
+        # Sortieren
+        sorted_by_accuracy = sorted(species_stats, key=lambda x: x["accuracy"], reverse=True)
+        sorted_by_total = sorted(species_stats, key=lambda x: x["total"], reverse=True)
+
+        def with_fallback(top_list, label):
+            result = top_list[:3]
+            while len(result) < 3:
+                print(f"[DEBUG] Nicht genug Arten für '{label}' – Platzhalter wird ergänzt.")
+                result.append({
+                    "species": "unknown",
+                    "display_name": "[Nicht genug Daten]",
+                    "accuracy": None,
+                    "total": 0
+                })
+            return result
+
+        top_best = with_fallback(sorted_by_accuracy, "Top erkannt")
+        top_worst = with_fallback(list(reversed(sorted_by_accuracy)), "Schwächste Arten")
+        top_frequent = with_fallback(sorted_by_total, "Häufigste Arten")
+
+        return top_best, top_worst, top_frequent
+
+
+
+    def monthly_audio_count_chart(self):
+        conn = sqlite3.connect(self.app_state.db_path)
+        cursor = conn.cursor()
+
+        # 🔹 Schritt 1: Monatlich aggregierte Daten inkl. Sessions
+        cursor.execute("""
+                SELECT 
+                    strftime('%m.%Y', timestamp) AS month,
+                    SUM(is_correct) AS correct,
+                    COUNT(*) AS total,
+                    COUNT(DISTINCT session_id) AS sessions
+                FROM results
+                GROUP BY month
+                ORDER BY month
+            """)
+        data = cursor.fetchall()
+        conn.close()
+
+        if not data:
+            return ft.Text("Noch keine Daten vorhanden.")
+
+        months = [row[0] for row in data]
+        correct_counts = [row[1] for row in data]
+        total_counts = [row[2] for row in data]
+        session_counts = [row[3] for row in data]
+        incorrect_counts = [total - correct for correct, total in zip(correct_counts, total_counts)]
+        max_total = max(total_counts)
+
+        bar_width = 40
+        spacing = 100
+        total_bars = len(data)
+        chart_width = max(800, total_bars * (bar_width + spacing))
+
+        bar_groups = []
+
+        for i, (month, correct, incorrect, total, sessions) in enumerate(zip(
+                months, correct_counts, incorrect_counts, total_counts, session_counts
+        )):
+            accuracy = (correct / total) * 100 if total > 0 else 0
+            tooltip = (
+                f"{month}\n"
+                f"Richtig: {correct}\n"
+                f"Falsch: {incorrect}\n"
+                f"Audios: {total}\n"
+                f"Sessions: {sessions}\n"
+                f"Ø Accuracy: {accuracy:.1f}%"
+            )
+
+            bar_groups.append(
+                ft.BarChartGroup(
+                    x=i,
+                    bar_rods=[
+                        ft.BarChartRod(
+                            from_y=0,
+                            to_y=total,
+                            width=bar_width,
+                            color=ft.Colors.BLUE_400,
+                            tooltip=tooltip,
+                            border_radius=5,
+                        )
+                    ]
+                )
+            )
+
+        chart = ft.BarChart(
+            bar_groups=bar_groups,
+            border=ft.border.only(
+                bottom=ft.border.BorderSide(1, ft.Colors.ON_SECONDARY_CONTAINER),
+                left=ft.border.BorderSide(1, ft.Colors.ON_SECONDARY_CONTAINER),
+            ),
+            horizontal_grid_lines=ft.ChartGridLines(interval=100),
+            left_axis=ft.ChartAxis(
+                title=ft.Text("Abgespielte Audios"),
+                title_size=40,
+                labels_size=40,
+                labels=[
+                    ft.ChartAxisLabel(value=i, label=ft.Text(f"{i}"))
+                    for i in range(0, max_total + 10, 10)
+                ],
+            ),
+            bottom_axis=ft.ChartAxis(
+                title=ft.Text("Monate"),
+                title_size=40,
+                labels_size=40,
+                labels=[
+                    ft.ChartAxisLabel(value=i, label=ft.Text(month))
+                    for i, month in enumerate(months)
+                ],
+            ),
+            max_y=max_total + 10,
+            width=chart_width,
+            height=400,
+            tooltip_bgcolor="grey",
+            tooltip_fit_inside_horizontally=True,
+            tooltip_fit_inside_vertically=True,
+        )
+
+        month_scrollable_chart = ft.Row(
+            controls=[chart],
+            scroll=ft.ScrollMode.ALWAYS
+        )
+
+        return month_scrollable_chart
+
+    def load_species_chart(self, species_name):
+        mapping = self.app_state.lookup_species(species_name)
+        if not mapping:
+            print(f"[WARN] Art '{species_name}' nicht gefunden.")
+            self.line_chart_output.content = ft.Text("Art wurde nicht erkannt.")
+            self.update()
+            return
+
+        scientific_name = mapping["Wissenschaftlich"].strip().lower()
+        scientific_name = scientific_name.replace(" ", "+")
+
+        conn = sqlite3.connect(self.app_state.db_path)
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT session_id,
+                   ROUND(AVG(is_correct) * 100) AS accuracy,
+                   COUNT(*) AS total_count
+            FROM results
+            WHERE correct_species = ?
+            GROUP BY session_id
+            HAVING total_count >= 5
+            ORDER BY session_id
+        """, (scientific_name,))
+        rows = cursor.fetchall()
+        conn.close()
+
+        if not rows:
+            self.line_chart_output.content = ft.Text("Keine ausreichenden Daten für diese Art.")
+            self.update()
+            return
+
+        df = pd.DataFrame(rows, columns=["session_id", "accuracy", "total"])
+        df = df.sort_values("session_id").reset_index(drop=True)
+        df["plot_x"] = range(len(df))
+
+        line_data = [
+            ft.LineChartDataPoint(
+                x=row["plot_x"],
+                y=row["accuracy"],
+                tooltip=f"Session {int(row['session_id'])}\nAudios: {int(row['total'])}\nØ Accuracy: {int(row['accuracy'])}%"
+            )
+            for _, row in df.iterrows()
+        ]
+
+        x_labels = [
+            ft.ChartAxisLabel(value=row["plot_x"], label=ft.Text(str(int(row["session_id"]))))
+            for _, row in df.iterrows()
+        ]
+
+        y_labels = [
+            ft.ChartAxisLabel(value=i, label=ft.Text(f"{i}%"))
+            for i in range(0, 101, 20)
+        ]
+
+        chart = ft.LineChart(
+            data_series=[ft.LineChartData(data_points=line_data, stroke_width=3, color=ft.Colors.GREEN_ACCENT_400)],
+            min_y=0, max_y=100,
+            min_x=0, max_x=len(df) - 1,
+            tooltip_bgcolor="black",
+            height=400,
+            width=max(800, 100 * len(df)),
+            border=ft.border.only(bottom=ft.border.BorderSide(1), left=ft.border.BorderSide(1)),
+            horizontal_grid_lines=ft.ChartGridLines(interval=20, color="grey"),
+            vertical_grid_lines=ft.ChartGridLines(interval=1, color="grey"),
+            left_axis=ft.ChartAxis(
+                title=ft.Text("Ø Erkennungsrate in %"),
+                title_size=40, labels_size=40, labels=y_labels
+            ),
+            bottom_axis=ft.ChartAxis(
+                title=ft.Text("Sessions"),
+                title_size=40, labels_size=40, labels=x_labels
+            )
+        )
+
+        self.line_chart_output.content = ft.Row([chart], scroll=ft.ScrollMode.ALWAYS)
+        self.update()
+
+    def get_valid_species_for_plotting(self):
+        """Gibt Arten zurück, die in mindestens einer Session ≥5 Audios haben."""
+        conn = sqlite3.connect(self.app_state.db_path)
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT correct_species
+            FROM results
+            GROUP BY correct_species, session_id
+            HAVING COUNT(*) >= 5
+        """)
+        rows = cursor.fetchall()
+        conn.close()
+
+        species_names = list(set(r[0] for r in rows if r[0]))  # Duplikate raus
+
+        # 🔹 Übersetzen ins Deutsche
+        translated = []
+        for sci_name in species_names:
+            mapped = self.app_state.lookup_species(sci_name)
+            if mapped:
+                translated.append(mapped["Deutsch"])
+        return sorted(translated)
+
+    def load_line_chart_for_list(self, list_name):
+        print(f"[INFO] Lade Liniendiagramm für Liste: '{list_name}'")
+
+        conn = sqlite3.connect(self.app_state.db_path)
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT session_id,
+                   SUM(is_correct) AS correct_count,
+                   COUNT(*) AS total_count
+            FROM results
+            WHERE list_name = ?
+            GROUP BY session_id
+            HAVING total_count >= 10
+        """, (list_name,))
+        rows = cursor.fetchall()
+        conn.close()
+
+        if not rows:
+            self.line_chart_output.content = ft.Text("Keine Daten für diese Liste gefunden.")
+            self.update()
+            return
+
+        df = pd.DataFrame(rows, columns=["session_id", "correct", "total"])
+        df["accuracy"] = (df["correct"] / df["total"] * 100).round(0)
+        df = df.sort_values(by="session_id").reset_index(drop=True)
+        df["plot_x"] = range(len(df))  # Gleichmäßig auf der X-Achse
+
+        print("[DEBUG] DataFrame für Chart:")
+        print(df)
+
+
+        line_data_series = [
+            ft.LineChartDataPoint(
+                x=row["plot_x"],
+                y=row["accuracy"]
+            )
+            for _, row in df.iterrows()
+        ]
+
+
+
+        y_labels = [
+            ft.ChartAxisLabel(value=i, label=ft.Text(f"{i}%"))
+            for i in range(0, 101, 20)
+        ]
+
+        chart = ft.LineChart(
+            data_series=[
+                ft.LineChartData(
+                    data_points=line_data_series,
+                    stroke_width=3,
+                    color=ft.Colors.GREEN_ACCENT_400,
+                    curved=False,
+                    stroke_cap_round=False
+                )
+            ],
+            min_y=0,
+            max_y=100,
+            min_x=0,
+            max_x=len(df) - 1,
+            height=400,
+            width=max(800, 100 * len(df)),
+            tooltip_bgcolor="black",
+            border=ft.border.only(
+                bottom=ft.border.BorderSide(1),
+                left=ft.border.BorderSide(1)
+            ),
+            horizontal_grid_lines=ft.ChartGridLines(interval=20, color="grey"),
+            vertical_grid_lines=ft.ChartGridLines(interval=1, color="grey"),
+            left_axis=ft.ChartAxis(
+                title=ft.Text("Ø Erkennungsrate in %"),
+                title_size=40,
+                labels_size=40,
+                labels=y_labels
+            ),
+            bottom_axis=ft.ChartAxis(
+                title=ft.Text("Sessions"),
+                title_size=40,
+                labels_size=40,
+                labels=[
+                    ft.ChartAxisLabel(value=row["plot_x"],
+                                      label=ft.Text(str(int(row["session_id"]))))
+                    for _, row in df.iterrows()
+                ]
+            )
+        )
+
+        self.line_chart_output.content = ft.Row([chart], scroll=ft.ScrollMode.ALWAYS)
+        self.update()
+
+    def get_played_list_names(self):
+        """Gibt alle Listen-Namen zurück, für die in der DB mind. 10 Audios gespielt wurden."""
+        conn = sqlite3.connect(self.app_state.db_path)
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT list_name
+            FROM results
+            WHERE list_name IS NOT NULL
+            GROUP BY list_name
+            HAVING COUNT(*) >= 10
+        """)
+        rows = cursor.fetchall()
+        conn.close()
+
+        return [r[0] for r in rows if r[0]]  # Falls `list_name` leer sein kann, filtern wir das raus
 
 
 class Overallsettings(BasePage):
@@ -1832,8 +2320,7 @@ class Overallsettings(BasePage):
         )
 
     def delete_all_results(self):
-        db_path = os.path.join(os.getenv("LOCALAPPDATA"), "SoundBirdQuiz", "game_results.db")
-        conn = sqlite3.connect(db_path)
+        conn = sqlite3.connect(self.app_state.db_path)
         cursor = conn.cursor()
         cursor.execute("DELETE FROM results")
         conn.commit()
